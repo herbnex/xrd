@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
 
-openai.api_key = "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"  # Set your API key as an env variable
+openai.api_key = "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"  # Set your API key
 
 app = Flask(__name__)
 CORS(app)
@@ -125,7 +125,7 @@ quant_schema = {
                         "crystallite_size_nm": {"type": "number"},
                         "confidence_score": {"type": "number"}
                     },
-                    "required": ["phase_name","weight_percent","lattice_params","crystallite_size_nm","confidence_score"]
+                    "required": ["phase_name", "weight_percent", "lattice_params", "crystallite_size_nm", "confidence_score"]
                 }
             }
         },
@@ -182,7 +182,7 @@ cluster_schema = {
                         "cluster_label": {"type": "string"},
                         "explanation": {"type": "string"}
                     },
-                    "required": ["filename","cluster_label","explanation"]
+                    "required": ["filename", "cluster_label", "explanation"]
                 }
             }
         },
@@ -205,7 +205,7 @@ simulation_schema = {
                         "two_theta": {"type": "number"},
                         "intensity": {"type": "number"}
                     },
-                    "required": ["two_theta","intensity"]
+                    "required": ["two_theta", "intensity"]
                 }
             }
         },
@@ -216,8 +216,6 @@ simulation_schema = {
 ##############################################################################
 # 2) GPT Call Helper (No numeric libs)
 ##############################################################################
-
-import re
 
 def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
     try:
@@ -251,7 +249,7 @@ def safe_json_loads(s):
 def run_gpt_pipeline(raw_text):
     # 1) parse
     parse_prompt = f"Convert lines to (two_theta, intensity). Use parse_xrd_data:\n```\n{raw_text}\n```"
-    parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name":"parse_xrd_data"})
+    parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
     parsed_data = []
     if parse_resp:
         fc = parse_resp["choices"][0]["message"].get("function_call")
@@ -261,7 +259,7 @@ def run_gpt_pipeline(raw_text):
 
     # 2) detect peaks
     detect_prompt = f"We have {parsed_data}. Identify peaks with detect_peaks."
-    detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name":"detect_peaks"})
+    detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name": "detect_peaks"})
     peaks = []
     if detect_resp:
         fc = detect_resp["choices"][0]["message"].get("function_call")
@@ -271,7 +269,7 @@ def run_gpt_pipeline(raw_text):
 
     # 3) pattern decomposition
     pattern_prompt = f"Given these raw peaks {peaks}, do advanced pattern decomposition => pattern_decomposition."
-    pattern_resp = call_gpt(pattern_prompt, [pattern_decomp_schema], {"name":"pattern_decomposition"})
+    pattern_resp = call_gpt(pattern_prompt, [pattern_decomp_schema], {"name": "pattern_decomposition"})
     fitted_peaks = []
     if pattern_resp:
         fc = pattern_resp["choices"][0]["message"].get("function_call")
@@ -281,7 +279,7 @@ def run_gpt_pipeline(raw_text):
 
     # 4) phase identification
     phase_prompt = f"Given fitted_peaks={fitted_peaks}, identify phases => phase_identification"
-    phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name":"phase_identification"})
+    phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name": "phase_identification"})
     phases = []
     if phase_resp:
         fc = phase_resp["choices"][0]["message"].get("function_call")
@@ -291,7 +289,7 @@ def run_gpt_pipeline(raw_text):
 
     # 5) quant
     quant_prompt = f"Phases: {phases}. Do Rietveld-like quant => quantitative_analysis"
-    quant_resp = call_gpt(quant_prompt, [quant_schema], {"name":"quantitative_analysis"})
+    quant_resp = call_gpt(quant_prompt, [quant_schema], {"name": "quantitative_analysis"})
     quant_results = []
     if quant_resp:
         fc = quant_resp["choices"][0]["message"].get("function_call")
@@ -301,7 +299,7 @@ def run_gpt_pipeline(raw_text):
 
     # 6) error detection
     error_prompt = f"Check anomalies in numeric data => error_detection. Data: {parsed_data}"
-    error_resp = call_gpt(error_prompt, [error_detection_schema], {"name":"error_detection"})
+    error_resp = call_gpt(error_prompt, [error_detection_schema], {"name": "error_detection"})
     issues_found = []
     suggested_actions = []
     if error_resp:
@@ -318,13 +316,13 @@ def run_gpt_pipeline(raw_text):
     phases={phases}, quant={quant_results}, issues={issues_found}, suggestions={suggested_actions}.
     => generate_final_report
     """
-    report_resp = call_gpt(final_prompt, [report_schema], {"name":"generate_final_report"})
+    report_resp = call_gpt(final_prompt, [report_schema], {"name": "generate_final_report"})
     final_report = ""
     if report_resp:
         fc = report_resp["choices"][0]["message"].get("function_call")
         if fc and fc["name"] == "generate_final_report":
             args = safe_json_loads(fc["arguments"])
-            final_report = args.get("report_text","")
+            final_report = args.get("report_text", "")
 
     return {
         "parsedData": parsed_data,
@@ -367,7 +365,7 @@ def simulate_pattern():
 
     struct_info = data['structure']
     prompt = f"Simulate an XRD pattern from structure: {struct_info} => simulate_pattern_gpt"
-    sim_resp = call_gpt(prompt, [simulation_schema], {"name":"simulate_pattern_gpt"})
+    sim_resp = call_gpt(prompt, [simulation_schema], {"name": "simulate_pattern_gpt"})
     parsed_data = []
     if sim_resp:
         fc = sim_resp["choices"][0]["message"].get("function_call")
@@ -396,11 +394,11 @@ def cluster_analysis():
     for f in cluster_files:
         text = f.read().decode('utf-8', errors='ignore')
         parse_prompt = f"Parse lines => parse_xrd_data:\n```\n{text}\n```"
-        parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name":"parse_xrd_data"})
+        parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
         parsed_data = []
         if parse_resp:
             fc = parse_resp["choices"][0]["message"].get("function_call")
-            if fc and fc["name"]=="parse_xrd_data":
+            if fc and fc["name"] == "parse_xrd_data":
                 args = safe_json_loads(fc["arguments"])
                 parsed_data = args.get("parsed_data", [])
 
@@ -415,11 +413,11 @@ def cluster_analysis():
     We have multiple patterns (filename + data). Cluster them => cluster_files_gpt
     Patterns: {pattern_summaries}
     """
-    cluster_resp = call_gpt(cluster_prompt, [cluster_schema], {"name":"cluster_files_gpt"})
+    cluster_resp = call_gpt(cluster_prompt, [cluster_schema], {"name": "cluster_files_gpt"})
     clusters = []
     if cluster_resp:
         fc = cluster_resp["choices"][0]["message"].get("function_call")
-        if fc and fc["name"]=="cluster_files_gpt":
+        if fc and fc["name"] == "cluster_files_gpt":
             args = safe_json_loads(fc["arguments"])
             clusters = args.get("clusters", [])
 
