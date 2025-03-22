@@ -165,6 +165,7 @@ export default function App() {
       });
       if (!resp.ok) throw new Error(`Analyze error: ${resp.statusText}`);
       const data = await resp.json();
+      console.log("Analysis result:", data);
       setAnalysisResult(data);
     } catch (err) {
       console.error(err);
