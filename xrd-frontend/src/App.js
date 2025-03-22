@@ -133,6 +133,7 @@ export default function App() {
   // API base URL on Render
   const API_BASE = 'https://xrd-backend-enuq.onrender.com';
 
+
   // Drawer toggles
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
   const toggleRightDrawer = () => setRightDrawerOpen(!rightDrawerOpen);
