@@ -130,9 +130,8 @@ export default function App() {
     ]
   };
 
-  // API base URL on Render
-  const API_BASE = 'https://xrd-backend-enuq.onrender.com';
-
+  // IMPORTANT: Point to your local Flask server
+  const API_BASE = 'http://127.0.0.1:8080';
 
   // Drawer toggles
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
@@ -148,6 +147,7 @@ export default function App() {
     setSimulationResult(null);
     setErrorMessage('');
   };
+
   const runAnalyze = async () => {
     if (!singleFile) return;
     setIsLoading(true);
@@ -187,6 +187,7 @@ export default function App() {
     setSimulationResult(null);
     setErrorMessage('');
   };
+
   const runCluster = async () => {
     if (!multiFiles.length) return;
     setIsLoading(true);
@@ -282,7 +283,8 @@ export default function App() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>One-Click Analysis</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Single File
-          <input hidden type="file" accept=".xy,.txt" onChange={handleSingleFileChange} />
+          {/* NOTE: no "accept" attribute => can upload any extension */}
+          <input hidden type="file" onChange={handleSingleFileChange} />
         </Button>
         {singleFile && (
           <Typography sx={{ fontSize: 12, mb: 1 }}>{singleFile.name}</Typography>
@@ -296,7 +298,8 @@ export default function App() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>Multi-File Cluster</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Select Files
-          <input hidden type="file" multiple accept=".xy,.txt" onChange={handleMultiFileChange} />
+          {/* again, no accept => any extension */}
+          <input hidden type="file" multiple onChange={handleMultiFileChange} />
         </Button>
         {multiFiles.length > 0 && (
           <Typography sx={{ fontSize: 12, mb: 1 }}>
@@ -450,7 +453,7 @@ export default function App() {
           )}
 
           {/* Welcome Card */}
-          {!isLoading && !analysisResult && (
+          {!isLoading && !analysisResult && !clusterResult && !simulationResult && (
             <Card variant="outlined" sx={{ maxWidth: 600, mx: 'auto', mt: 4 }}>
               <CardContent>
                 <Typography variant="h5" gutterBottom>

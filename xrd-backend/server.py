@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 ##############################################################################
-# 1) GPT Function Schemas (No numeric libs—GPT handles everything)
+# 1) GPT Function Schemas
 ##############################################################################
 
 # Parse XRD
@@ -214,7 +214,7 @@ simulation_schema = {
 }
 
 ##############################################################################
-# 2) GPT Call Helper (No numeric libs)
+# 2) GPT Call Helper
 ##############################################################################
 
 def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
@@ -382,14 +382,13 @@ def simulate_pattern():
 @app.route('/api/cluster', methods=['POST'])
 def cluster_analysis():
     """
-    GPT-based cluster of multiple .xy. 
-    We'll parse each file with GPT parse_xrd_data, then let GPT group them => cluster_files_gpt
+    GPT-based cluster of multiple .xy or any extension. 
+    We'll parse each file with GPT parse_xrd_data, store the results, then feed them back to GPT for cluster.
     """
     cluster_files = request.files.getlist('clusterFiles')
     if not cluster_files:
         return jsonify({'error':'No files for cluster analysis'}), 400
 
-    # We'll parse each file with GPT parse_xrd_data, store the results, then feed them back to GPT for cluster
     pattern_summaries = []
     for f in cluster_files:
         text = f.read().decode('utf-8', errors='ignore')
@@ -402,13 +401,11 @@ def cluster_analysis():
                 args = safe_json_loads(fc["arguments"])
                 parsed_data = args.get("parsed_data", [])
 
-        # We'll just store filename + parsed_data
         pattern_summaries.append({
             "filename": f.filename,
             "parsed_data": parsed_data
         })
 
-    # Now pass them to GPT to cluster
     cluster_prompt = f"""
     We have multiple patterns (filename + data). Cluster them => cluster_files_gpt
     Patterns: {pattern_summaries}
@@ -442,8 +439,9 @@ def instrument_upload():
     return jsonify(result), 200
 
 ##############################################################################
-# 5) Run
+# 5) Run (Local)
 ##############################################################################
 
 if __name__ == '__main__':
+    # Feel free to change port=8080 or 5000, etc.
     app.run(host='0.0.0.0', port=8080, debug=True)
