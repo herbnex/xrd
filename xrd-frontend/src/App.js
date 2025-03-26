@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -12,12 +12,8 @@ import {
   CardContent,
   Alert,
   CircularProgress,
-  Container,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell
+  TextField,
+  Container
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import { Menu as MenuIcon, UploadFile as UploadIcon } from '@mui/icons-material';
@@ -30,24 +26,12 @@ import {
   YAxis,
   Tooltip,
   Legend,
-  Line
+  Line,
+  BarChart,
+  Bar
 } from 'recharts';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
-
-/** Multi-step illusions for user while loading. */
-const STAGES = [
-  'Parsing XRD File with GPT...',
-  'Background Subtraction (NumPy)...',
-  'Smoothing (NumPy)...',
-  'Kα2 Stripping (NumPy)...',
-  'Peak Detection (GPT)...',
-  'Pattern Decomposition (GPT)...',
-  'Phase Identification (GPT)...',
-  'Quantitative Analysis (GPT)...',
-  'Error Detection (GPT)...',
-  'Final Report (GPT)...'
-];
 
 /** Splits multiline text into paragraphs. */
 function ReportDisplay({ text }) {
@@ -64,7 +48,7 @@ function ReportDisplay({ text }) {
   );
 }
 
-/** Simple function to unify experimental vs. fitted data for charting. */
+/** Combine Exp vs. Fitted data for an overlaid chart. */
 function unifyExpFittedData(expData, fittedPeaks) {
   const map = new Map();
   expData.forEach(d => {
@@ -89,6 +73,7 @@ function unifyExpFittedData(expData, fittedPeaks) {
   return Array.from(map.values()).sort((a, b) => a.two_theta - b.two_theta);
 }
 
+// Drawer widths
 const LEFT_DRAWER_WIDTH = 260;
 const RIGHT_DRAWER_WIDTH = 300;
 
@@ -102,7 +87,7 @@ const RootBox = styled('div')({
 /** Main content that auto-adjusts margin based on drawer states. */
 const MainContent = styled('main')(({ theme, leftOpen, rightOpen }) => ({
   flexGrow: 1,
-  marginTop: theme.spacing(8),
+  marginTop: theme.spacing(8), // space for AppBar
   marginLeft: leftOpen ? LEFT_DRAWER_WIDTH : 0,
   marginRight: rightOpen ? RIGHT_DRAWER_WIDTH : 0,
   transition: theme.transitions.create(['margin'], {
@@ -112,80 +97,76 @@ const MainContent = styled('main')(({ theme, leftOpen, rightOpen }) => ({
 }));
 
 export default function App() {
-  // Drawer states
+  // Left drawer (temporary)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(true);
+  // Right drawer (persistent)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(true);
 
   // File states
   const [singleFile, setSingleFile] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
+  const [multiFiles, setMultiFiles] = useState([]);
+  const [clusterResult, setClusterResult] = useState(null);
+  const [simulationText, setSimulationText] = useState('');
+  const [simulationResult, setSimulationResult] = useState(null);
 
-  // Progress states
+  // UI states
   const [isLoading, setIsLoading] = useState(false);
-  const [currentStage, setCurrentStage] = useState(0);
-  const progressTimerRef = useRef(null);
-
-  // Error
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Stage-based illusions: run a timer that increments currentStage every 1 second
-  useEffect(() => {
-    if (isLoading) {
-      setCurrentStage(0);
-      progressTimerRef.current = setInterval(() => {
-        setCurrentStage(prev => {
-          if (prev < STAGES.length - 1) return prev + 1;
-          return prev; // once we reach last stage, stay there
-        });
-      }, 1000);
-    } else {
-      // stop the interval
-      if (progressTimerRef.current) {
-        clearInterval(progressTimerRef.current);
-        progressTimerRef.current = null;
-      }
-      setCurrentStage(0);
-    }
-    return () => {
-      // cleanup if user unmounts
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    };
-  }, [isLoading]);
-
-  // For chart
+  // Merge data for chart
   const expData = analysisResult?.parsedData || [];
   const fittedPeaks = analysisResult?.fittedPeaks || [];
   const chartData = unifyExpFittedData(expData, fittedPeaks);
 
-  // Layout config
+  // For bar chart
+  const quantData = analysisResult?.quantResults?.map(q => ({
+    name: q.phase_name,
+    wtPercent: q.weight_percent
+  })) || [];
+
+  // React Grid Layout configuration
   const layouts = {
     lg: [
-      { i: 'stageProgress', x: 0, y: 0, w: 12, h: 2 },
-      { i: 'diffPattern', x: 0, y: 2, w: 6, h: 10 },
-      { i: 'parsedData', x: 6, y: 2, w: 6, h: 10 },
-      { i: 'finalReport', x: 0, y: 12, w: 12, h: 6 }
+      { i: 'diffPattern', x: 0, y: 0, w: 6, h: 10 },
+      { i: 'phaseComp', x: 6, y: 0, w: 6, h: 10 },
+      { i: 'finalReport', x: 0, y: 10, w: 12, h: 8 }
+    ],
+    md: [
+      { i: 'diffPattern', x: 0, y: 0, w: 6, h: 10 },
+      { i: 'phaseComp', x: 6, y: 0, w: 6, h: 10 },
+      { i: 'finalReport', x: 0, y: 10, w: 12, h: 8 }
+    ],
+    sm: [
+      { i: 'diffPattern', x: 0, y: 0, w: 6, h: 10 },
+      { i: 'phaseComp', x: 0, y: 10, w: 6, h: 10 },
+      { i: 'finalReport', x: 0, y: 20, w: 6, h: 8 }
     ]
   };
 
-  // In a real app, change to your actual backend URL
+  // Endpoint base URL
   const API_BASE = 'https://xrd-backend-enuq.onrender.com';
 
+  // Drawer toggles
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
   const toggleRightDrawer = () => setRightDrawerOpen(!rightDrawerOpen);
 
   /*******************************************************
-   * Single File Analysis
+   * Single File
    *******************************************************/
   const handleSingleFileChange = (e) => {
     setSingleFile(e.target.files[0]);
     setAnalysisResult(null);
+    setClusterResult(null);
+    setSimulationResult(null);
     setErrorMessage('');
   };
-
   const runAnalyze = async () => {
     if (!singleFile) return;
     setIsLoading(true);
     setAnalysisResult(null);
+    setClusterResult(null);
+    setSimulationResult(null);
     setErrorMessage('');
 
     try {
@@ -201,15 +182,78 @@ export default function App() {
       setAnalysisResult(data);
     } catch (err) {
       console.error(err);
-      setErrorMessage('Analysis failed. ' + err.message);
+      setErrorMessage('Analysis failed.');
     } finally {
-      // once we have a response (success or error), stop loading
       setIsLoading(false);
     }
   };
 
   /*******************************************************
-   * Render
+   * Multi-file
+   *******************************************************/
+  const handleMultiFileChange = (e) => {
+    const files = Array.from(e.target.files);
+    setMultiFiles(files);
+    setAnalysisResult(null);
+    setClusterResult(null);
+    setSimulationResult(null);
+    setErrorMessage('');
+  };
+  const runCluster = async () => {
+    if (!multiFiles.length) return;
+    setIsLoading(true);
+    setAnalysisResult(null);
+    setClusterResult(null);
+    setSimulationResult(null);
+    setErrorMessage('');
+    try {
+      const formData = new FormData();
+      multiFiles.forEach(f => formData.append('clusterFiles', f));
+      const resp = await fetch(`${API_BASE}/api/cluster`, {
+        method: 'POST',
+        body: formData
+      });
+      if (!resp.ok) throw new Error(`Cluster error: ${resp.statusText}`);
+      const data = await resp.json();
+      setClusterResult(data);
+    } catch (err) {
+      console.error(err);
+      setErrorMessage('Cluster failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /*******************************************************
+   * Simulation
+   *******************************************************/
+  const runSimulate = async () => {
+    if (!simulationText.trim()) return;
+    setIsLoading(true);
+    setAnalysisResult(null);
+    setClusterResult(null);
+    setSimulationResult(null);
+    setErrorMessage('');
+
+    try {
+      const resp = await fetch(`${API_BASE}/api/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structure: simulationText })
+      });
+      if (!resp.ok) throw new Error(`Simulation error: ${resp.statusText}`);
+      const data = await resp.json();
+      setSimulationResult(data);
+    } catch (err) {
+      console.error(err);
+      setErrorMessage('Simulation error.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /*******************************************************
+   * RENDER
    *******************************************************/
   return (
     <RootBox>
@@ -219,15 +263,15 @@ export default function App() {
             <MenuIcon />
           </IconButton>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            XRD Dashboard (Numeric + GPT)
+            XRD Dashboard (All GPT)
           </Typography>
           <Button color="inherit" onClick={toggleRightDrawer}>
-            {rightDrawerOpen ? 'Hide Right Pane' : 'Show Right Pane'}
+            {rightDrawerOpen ? 'Hide Phases' : 'Show Phases'}
           </Button>
         </Toolbar>
       </AppBar>
 
-      {/* LEFT DRAWER */}
+      {/* LEFT DRAWER - TEMPORARY */}
       <Drawer
         variant="temporary"
         open={leftDrawerOpen}
@@ -238,7 +282,7 @@ export default function App() {
             boxSizing: 'border-box',
             backgroundColor: '#f5f5f5',
             p: 2,
-            pt: 8
+            pt: 8 // push content below app bar
           }
         }}
       >
@@ -247,20 +291,55 @@ export default function App() {
         </Typography>
         <Divider sx={{ mb: 2 }} />
 
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>Single File</Typography>
+        {/* Single-file upload */}
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>One-Click Analysis</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
-          Choose File
+          Single File
           <input hidden type="file" accept=".xy,.txt" onChange={handleSingleFileChange} />
         </Button>
         {singleFile && (
           <Typography sx={{ fontSize: 12, mb: 1 }}>{singleFile.name}</Typography>
         )}
-        <Button variant="contained" onClick={runAnalyze} disabled={!singleFile || isLoading} fullWidth>
+        <Button variant="contained" onClick={runAnalyze} disabled={!singleFile} fullWidth>
           Analyze
+        </Button>
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Multi-file cluster */}
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>Multi-File Cluster</Typography>
+        <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
+          Select Files
+          <input hidden type="file" multiple accept=".xy,.txt" onChange={handleMultiFileChange} />
+        </Button>
+        {multiFiles.length > 0 && (
+          <Typography sx={{ fontSize: 12, mb: 1 }}>
+            {multiFiles.map(f => f.name).join(', ')}
+          </Typography>
+        )}
+        <Button variant="contained" onClick={runCluster} disabled={!multiFiles.length} fullWidth>
+          Cluster
+        </Button>
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Simulation */}
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>Simulation</Typography>
+        <TextField
+          multiline
+          rows={4}
+          variant="outlined"
+          placeholder="Enter structure..."
+          value={simulationText}
+          onChange={(e) => setSimulationText(e.target.value)}
+          sx={{ width: '100%', mb: 1 }}
+        />
+        <Button variant="contained" onClick={runSimulate} disabled={!simulationText.trim()} fullWidth>
+          Simulate
         </Button>
       </Drawer>
 
-      {/* RIGHT DRAWER */}
+      {/* RIGHT DRAWER - PERSISTENT */}
       <Drawer
         variant="persistent"
         anchor="right"
@@ -276,88 +355,92 @@ export default function App() {
         }}
       >
         <Typography variant="h6" sx={{ mb: 2 }} color="primary">
-          Detailed Results
+          Phases / Rietveld
         </Typography>
-        {analysisResult ? (
-          <Box sx={{ overflowY: 'auto', maxHeight: '80vh' }}>
-            {/* Show phases */}
+        {!analysisResult && (
+          <Typography variant="body2" color="text.secondary">
+            No analysis data yet.
+          </Typography>
+        )}
+        {analysisResult && (
+          <Box sx={{ overflowY: 'auto' }}>
+            {/* Phase identification */}
             {analysisResult.phases?.length > 0 && (
               <>
                 <Typography variant="subtitle1">Phases Identified</Typography>
-                {analysisResult.phases.map((ph, idx) => (
-                  <Typography key={idx} variant="body2">
-                    {ph.phase_name} (confidence: {(ph.confidence * 100).toFixed(1)}%)
+                {analysisResult.phases.map((ph, i) => (
+                  <Typography key={i} variant="body2">
+                    {ph.phase_name}<br />
+                    Confidence: {(ph.confidence * 100).toFixed(1)}%
                   </Typography>
                 ))}
                 <Divider sx={{ my: 2 }} />
               </>
             )}
-            {/* Show fitted peaks */}
+
+            {/* Fitted peaks */}
             {analysisResult.fittedPeaks?.length > 0 && (
               <>
                 <Typography variant="subtitle1">Fitted Peaks</Typography>
-                <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>2θ</TableCell>
-                        <TableCell>Intensity</TableCell>
-                        <TableCell>FWHM</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {analysisResult.fittedPeaks.map((fp, i) => (
-                        <TableRow key={i}>
-                          <TableCell>{fp.two_theta}</TableCell>
-                          <TableCell>{fp.intensity}</TableCell>
-                          <TableCell>{fp.fwhm}</TableCell>
-                        </TableRow>
+                <Box sx={{ maxHeight: 200, overflowY: 'auto', mb: 2 }}>
+                  <table style={{ width: '100%', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr>
+                        <th>2θ</th>
+                        <th>Intensity</th>
+                        <th>FWHM</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysisResult.fittedPeaks.map((fp, idx) => (
+                        <tr key={idx}>
+                          <td>{fp.two_theta}</td>
+                          <td>{fp.intensity}</td>
+                          <td>{fp.fwhm}</td>
+                        </tr>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </Box>
-                <Divider sx={{ my: 2 }} />
+                <Divider sx={{ mb: 2 }} />
               </>
             )}
-            {/* Show quant results */}
+
+            {/* Quantitative (Rietveld-like) */}
             {analysisResult.quantResults?.length > 0 && (
               <>
                 <Typography variant="subtitle1">Quantitative Analysis</Typography>
                 <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Phase</TableCell>
-                        <TableCell>wt%</TableCell>
-                        <TableCell>Lattice</TableCell>
-                        <TableCell>Size (nm)</TableCell>
-                        <TableCell>Conf.</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {analysisResult.quantResults.map((q, i) => (
-                        <TableRow key={i}>
-                          <TableCell>{q.phase_name}</TableCell>
-                          <TableCell>{q.weight_percent}</TableCell>
-                          <TableCell>{q.lattice_params}</TableCell>
-                          <TableCell>{q.crystallite_size_nm}</TableCell>
-                          <TableCell>{q.confidence_score}</TableCell>
-                        </TableRow>
+                  <table style={{ width: '100%', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr>
+                        <th>Phase</th>
+                        <th>wt%</th>
+                        <th>Lattice</th>
+                        <th>Crystallite (nm)</th>
+                        <th>Conf.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysisResult.quantResults.map((qr, i) => (
+                        <tr key={i}>
+                          <td>{qr.phase_name}</td>
+                          <td>{qr.weight_percent}</td>
+                          <td>{qr.lattice_params}</td>
+                          <td>{qr.crystallite_size_nm}</td>
+                          <td>{qr.confidence_score}</td>
+                        </tr>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </Box>
               </>
             )}
           </Box>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            No analysis data yet.
-          </Typography>
         )}
       </Drawer>
 
-      {/* MAIN CONTENT */}
+      {/* MAIN CONTENT (center) */}
       <MainContent leftOpen={leftDrawerOpen} rightOpen={rightDrawerOpen}>
         <Container maxWidth="lg" sx={{ py: 2 }}>
           {errorMessage && (
@@ -366,35 +449,39 @@ export default function App() {
             </Alert>
           )}
 
-          {/* Show stage-based progress if loading */}
           {isLoading && (
-            <Box sx={{ textAlign: 'center', mb: 2 }}>
+            <Box sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: 'calc(100vh - 64px)'
+            }}>
               <CircularProgress />
-              <Typography variant="body2" sx={{ mt: 1 }}>
-                {STAGES[currentStage]}
-              </Typography>
+              <Typography variant="body2" mt={1}>Processing...</Typography>
             </Box>
           )}
 
-          {/* If no analysis yet */}
-          {!isLoading && !analysisResult && (
-            <Card variant="outlined" sx={{ mx: 'auto', mt: 4, maxWidth: 600 }}>
+          {/* Welcome Card */}
+          {!isLoading && !analysisResult && !clusterResult && !simulationResult && (
+            <Card variant="outlined" sx={{ maxWidth: 600, mx: 'auto', mt: 4 }}>
               <CardContent>
                 <Typography variant="h5" gutterBottom>
                   Welcome to the XRD Dashboard
                 </Typography>
                 <Divider sx={{ my: 2 }} />
                 <Typography variant="body1">
-                  Upload a single XRD file to analyze. You will see step-by-step progress in the center,
-                  and final results (Phases, Fitted Peaks, etc.) in the right drawer.
+                  Please upload a single XRD file to analyze, or multiple files to cluster. 
+                  You can also run a simulation by entering a structure in the left drawer.
+                  The center area auto-adjusts when drawers are opened or closed.
                 </Typography>
               </CardContent>
             </Card>
           )}
 
-          {/* Once we have a result, display it */}
-          {analysisResult && !isLoading && (
-            <Box sx={{ width: '100%', background: '#fff', borderRadius: 2, p: 1 }}>
+          {/* React Grid Layout for Analysis Data */}
+          {!isLoading && analysisResult && (
+            <Box sx={{ width: '100%', background: '#fff', borderRadius: '4px', p: 1 }}>
               <ResponsiveGridLayout
                 className="layout"
                 layouts={layouts}
@@ -404,37 +491,25 @@ export default function App() {
                 margin={[10, 10]}
                 useCSSTransforms
                 compactType="none"
+                style={{ background: '#fff', borderRadius: '4px' }}
               >
-                {/* stageProgress is optional, but we can show final stage or a summary */}
-                <div key="stageProgress" style={{ background: '#fafafa', border: '1px solid #ddd', borderRadius: 4, padding: 10 }}>
-                  <Typography variant="subtitle1">Analysis Steps Completed</Typography>
-                  <Divider sx={{ my: 1 }} />
-                  {STAGES.map((s, idx) => (
-                    <Typography
-                      key={idx}
-                      variant="body2"
-                      sx={{ color: idx <= currentStage ? 'text.primary' : 'text.disabled' }}
-                    >
-                      {s}
-                    </Typography>
-                  ))}
-                </div>
-
-                {/* Chart of Exp vs. Fitted */}
-                <div key="diffPattern" style={{ background: '#fafafa', border: '1px solid #ddd', borderRadius: 4, padding: 10 }}>
-                  <Typography variant="subtitle1" sx={{ mb: 1 }}>Diffraction Pattern</Typography>
+                {/* Diffraction Pattern Panel */}
+                <div key="diffPattern" style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
+                    Diffraction Pattern
+                  </Typography>
                   <Divider sx={{ mb: 2 }} />
                   {chartData.length > 0 ? (
-                    <Box sx={{ width: '100%', height: 300 }}>
+                    <Box sx={{ width: '100%', height: '100%' }}>
                       <ResponsiveContainer>
-                        <LineChart data={chartData}>
+                        <LineChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="two_theta" label={{ value: '2θ', position: 'insideBottomRight', offset: 0 }} />
+                          <XAxis dataKey="two_theta" label={{ value: '2θ (deg)', position: 'insideBottomRight', offset: 0 }} />
                           <YAxis />
                           <Tooltip />
                           <Legend />
-                          <Line type="monotone" dataKey="intensity" stroke="#8884d8" name="Experimental" dot={false} />
-                          <Line type="monotone" dataKey="fittedIntensity" stroke="#82ca9d" name="Fitted" dot={false} />
+                          <Line type="monotone" dataKey="intensity" stroke="#8884d8" name="Exp." />
+                          <Line type="monotone" dataKey="fittedIntensity" stroke="#82ca9d" name="Fitted" />
                         </LineChart>
                       </ResponsiveContainer>
                     </Box>
@@ -443,33 +518,97 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Table of parsed data or other intermediate steps */}
-                <div key="parsedData" style={{ background: '#fafafa', border: '1px solid #ddd', borderRadius: 4, padding: 10 }}>
-                  <Typography variant="subtitle1" sx={{ mb: 1 }}>Intermediate Steps</Typography>
-                  <Divider sx={{ mb: 1 }} />
-                  {/* Show some data about each stage if desired */}
-                  <Typography variant="body2">
-                    <strong>Parsed Points:</strong> {analysisResult.parsedData?.length || 0}
+                {/* Phase Composition Panel */}
+                <div key="phaseComp" style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
+                    Phase Composition (wt%)
                   </Typography>
-                  <Typography variant="body2">
-                    <strong>Background-Corrected Points:</strong> {analysisResult.bgCorrectedData?.length || 0}
-                  </Typography>
-                  <Typography variant="body2">
-                    <strong>Smoothed Points:</strong> {analysisResult.smoothedData?.length || 0}
-                  </Typography>
-                  <Typography variant="body2">
-                    <strong>Kα2-Stripped Points:</strong> {analysisResult.strippedData?.length || 0}
-                  </Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  {quantData.length > 0 ? (
+                    <Box sx={{ width: '100%', height: '100%' }}>
+                      <ResponsiveContainer>
+                        <BarChart data={quantData} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Bar dataKey="wtPercent" fill="#8884d8" name="wt%" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  ) : (
+                    <Typography variant="body2">No composition data from GPT.</Typography>
+                  )}
                 </div>
 
-                {/* Final Report */}
-                <div key="finalReport" style={{ background: '#fafafa', border: '1px solid #ddd', borderRadius: 4, padding: 10 }}>
-                  <Typography variant="subtitle1" sx={{ mb: 1 }}>Final Report</Typography>
+                {/* Final Report Panel */}
+                <div key="finalReport" style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
+                    Final Report
+                  </Typography>
                   <Divider sx={{ mb: 2 }} />
-                  <ReportDisplay text={analysisResult.finalReport} />
+                  {analysisResult.finalReport ? (
+                    <ReportDisplay text={analysisResult.finalReport} />
+                  ) : (
+                    <Typography variant="body2">No final report from GPT.</Typography>
+                  )}
                 </div>
               </ResponsiveGridLayout>
             </Box>
+          )}
+
+          {/* Cluster Results */}
+          {clusterResult && !isLoading && (
+            <Card variant="outlined" sx={{ mt: 4, maxWidth: 900, mx: 'auto' }}>
+              <CardContent>
+                <Typography variant="h6">Cluster Results</Typography>
+                <Divider sx={{ my: 2 }} />
+                {clusterResult.clusters?.map((c, idx) => (
+                  <Typography key={idx} variant="body2" sx={{ mb: 1 }}>
+                    {c.filename} =&gt; cluster={c.cluster_label} - {c.explanation}
+                  </Typography>
+                ))}
+                {clusterResult.finalReport && (
+                  <>
+                    <Divider sx={{ my: 2 }} />
+                    <ReportDisplay text={clusterResult.finalReport} />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Simulation Results */}
+          {simulationResult && !isLoading && (
+            <Card variant="outlined" sx={{ mt: 4, maxWidth: 900, mx: 'auto' }}>
+              <CardContent>
+                <Typography variant="h6">Simulated Pattern</Typography>
+                <Divider sx={{ my: 2 }} />
+                {simulationResult.parsedData?.length > 0 ? (
+                  <Box sx={{ width: '100%', height: 300 }}>
+                    <ResponsiveContainer>
+                      <LineChart data={simulationResult.parsedData} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="two_theta" />
+                        <YAxis dataKey="intensity" />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="intensity" stroke="#82ca9d" name="Sim." />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                ) : (
+                  <Typography variant="body2">No simulation data from GPT</Typography>
+                )}
+                {simulationResult.finalReport && (
+                  <>
+                    <Divider sx={{ my: 2 }} />
+                    <ReportDisplay text={simulationResult.finalReport} />
+                  </>
+                )}
+              </CardContent>
+            </Card>
           )}
         </Container>
       </MainContent>
