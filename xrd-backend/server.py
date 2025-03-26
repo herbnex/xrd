@@ -5,13 +5,21 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
 
-openai.api_key = "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"  # Set your API key as an env variable
+##############################################################################
+# 0) Set up your OpenAI key via ENV variable
+##############################################################################
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    print("[WARNING] OPENAI_API_KEY environment variable not set! GPT calls will fail.")
+else:
+    openai.api_key = openai_api_key
+    print("[INFO] Loaded OPENAI_API_KEY from environment.")
 
 app = Flask(__name__)
 CORS(app)
 
 ##############################################################################
-# 1) GPT Function Schemas (No numeric libs—GPT handles everything)
+# 1) GPT Function Schemas
 ##############################################################################
 
 # Parse XRD
@@ -125,7 +133,13 @@ quant_schema = {
                         "crystallite_size_nm": {"type": "number"},
                         "confidence_score": {"type": "number"}
                     },
-                    "required": ["phase_name","weight_percent","lattice_params","crystallite_size_nm","confidence_score"]
+                    "required": [
+                        "phase_name",
+                        "weight_percent",
+                        "lattice_params",
+                        "crystallite_size_nm",
+                        "confidence_score"
+                    ]
                 }
             }
         },
@@ -182,7 +196,7 @@ cluster_schema = {
                         "cluster_label": {"type": "string"},
                         "explanation": {"type": "string"}
                     },
-                    "required": ["filename","cluster_label","explanation"]
+                    "required": ["filename", "cluster_label", "explanation"]
                 }
             }
         },
@@ -205,7 +219,7 @@ simulation_schema = {
                         "two_theta": {"type": "number"},
                         "intensity": {"type": "number"}
                     },
-                    "required": ["two_theta","intensity"]
+                    "required": ["two_theta", "intensity"]
                 }
             }
         },
@@ -214,12 +228,14 @@ simulation_schema = {
 }
 
 ##############################################################################
-# 2) GPT Call Helper (No numeric libs)
+# 2) GPT Call Helper
 ##############################################################################
 
-import re
-
 def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
+    """
+    Invokes the OpenAI ChatCompletion with function calling.
+    If there's an error (like invalid key), logs it and returns None.
+    """
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
@@ -233,10 +249,14 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
         print(response)
         return response
     except Exception as e:
-        print(f"OpenAI error: {e}")
+        print(f"[ERROR] OpenAI error: {e}")
         return None
 
 def safe_json_loads(s):
+    """
+    Safely loads JSON from GPT function_call arguments,
+    cleaning out invisible control chars if necessary.
+    """
     s = s or ""
     cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
     try:
@@ -249,9 +269,25 @@ def safe_json_loads(s):
 ##############################################################################
 
 def run_gpt_pipeline(raw_text):
+    print("[DEBUG] run_gpt_pipeline called with raw_text length =", len(raw_text))
+    
+    if not openai.api_key:
+        print("[WARNING] No OpenAI API key set. GPT calls will fail => returning empty.")
+        return {
+            "parsedData": [],
+            "peaks": [],
+            "fittedPeaks": [],
+            "phases": [],
+            "quantResults": [],
+            "issuesFound": [],
+            "suggestedActions": [],
+            "finalReport": ""
+        }
+
     # 1) parse
     parse_prompt = f"Convert lines to (two_theta, intensity). Use parse_xrd_data:\n```\n{raw_text}\n```"
-    parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name":"parse_xrd_data"})
+    print("[DEBUG] parse_prompt:", parse_prompt)
+    parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
     parsed_data = []
     if parse_resp:
         fc = parse_resp["choices"][0]["message"].get("function_call")
@@ -261,7 +297,7 @@ def run_gpt_pipeline(raw_text):
 
     # 2) detect peaks
     detect_prompt = f"We have {parsed_data}. Identify peaks with detect_peaks."
-    detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name":"detect_peaks"})
+    detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name": "detect_peaks"})
     peaks = []
     if detect_resp:
         fc = detect_resp["choices"][0]["message"].get("function_call")
@@ -271,7 +307,7 @@ def run_gpt_pipeline(raw_text):
 
     # 3) pattern decomposition
     pattern_prompt = f"Given these raw peaks {peaks}, do advanced pattern decomposition => pattern_decomposition."
-    pattern_resp = call_gpt(pattern_prompt, [pattern_decomp_schema], {"name":"pattern_decomposition"})
+    pattern_resp = call_gpt(pattern_prompt, [pattern_decomp_schema], {"name": "pattern_decomposition"})
     fitted_peaks = []
     if pattern_resp:
         fc = pattern_resp["choices"][0]["message"].get("function_call")
@@ -281,7 +317,7 @@ def run_gpt_pipeline(raw_text):
 
     # 4) phase identification
     phase_prompt = f"Given fitted_peaks={fitted_peaks}, identify phases => phase_identification"
-    phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name":"phase_identification"})
+    phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name": "phase_identification"})
     phases = []
     if phase_resp:
         fc = phase_resp["choices"][0]["message"].get("function_call")
@@ -291,7 +327,7 @@ def run_gpt_pipeline(raw_text):
 
     # 5) quant
     quant_prompt = f"Phases: {phases}. Do Rietveld-like quant => quantitative_analysis"
-    quant_resp = call_gpt(quant_prompt, [quant_schema], {"name":"quantitative_analysis"})
+    quant_resp = call_gpt(quant_prompt, [quant_schema], {"name": "quantitative_analysis"})
     quant_results = []
     if quant_resp:
         fc = quant_resp["choices"][0]["message"].get("function_call")
@@ -301,7 +337,7 @@ def run_gpt_pipeline(raw_text):
 
     # 6) error detection
     error_prompt = f"Check anomalies in numeric data => error_detection. Data: {parsed_data}"
-    error_resp = call_gpt(error_prompt, [error_detection_schema], {"name":"error_detection"})
+    error_resp = call_gpt(error_prompt, [error_detection_schema], {"name": "error_detection"})
     issues_found = []
     suggested_actions = []
     if error_resp:
@@ -318,13 +354,13 @@ def run_gpt_pipeline(raw_text):
     phases={phases}, quant={quant_results}, issues={issues_found}, suggestions={suggested_actions}.
     => generate_final_report
     """
-    report_resp = call_gpt(final_prompt, [report_schema], {"name":"generate_final_report"})
+    report_resp = call_gpt(final_prompt, [report_schema], {"name": "generate_final_report"})
     final_report = ""
     if report_resp:
         fc = report_resp["choices"][0]["message"].get("function_call")
         if fc and fc["name"] == "generate_final_report":
             args = safe_json_loads(fc["arguments"])
-            final_report = args.get("report_text","")
+            final_report = args.get("report_text", "")
 
     return {
         "parsedData": parsed_data,
@@ -351,6 +387,7 @@ def analyze_xrd():
         return jsonify({'error': 'No file uploaded'}), 400
 
     raw_text = f.read().decode('utf-8', errors='ignore')
+    print(f"[DEBUG] /api/analyze received file of length {len(raw_text)} chars.")
     result = run_gpt_pipeline(raw_text)
     return jsonify(result), 200
 
@@ -367,7 +404,8 @@ def simulate_pattern():
 
     struct_info = data['structure']
     prompt = f"Simulate an XRD pattern from structure: {struct_info} => simulate_pattern_gpt"
-    sim_resp = call_gpt(prompt, [simulation_schema], {"name":"simulate_pattern_gpt"})
+    print("[DEBUG] /api/simulate, prompt:", prompt)
+    sim_resp = call_gpt(prompt, [simulation_schema], {"name": "simulate_pattern_gpt"})
     parsed_data = []
     if sim_resp:
         fc = sim_resp["choices"][0]["message"].get("function_call")
@@ -384,42 +422,40 @@ def simulate_pattern():
 @app.route('/api/cluster', methods=['POST'])
 def cluster_analysis():
     """
-    GPT-based cluster of multiple .xy. 
-    We'll parse each file with GPT parse_xrd_data, then let GPT group them => cluster_files_gpt
+    GPT-based cluster of multiple .xy or any extension. 
+    We'll parse each file with GPT parse_xrd_data, store the results, then feed them back to GPT for cluster.
     """
     cluster_files = request.files.getlist('clusterFiles')
     if not cluster_files:
-        return jsonify({'error':'No files for cluster analysis'}), 400
+        return jsonify({'error': 'No files for cluster analysis'}), 400
 
-    # We'll parse each file with GPT parse_xrd_data, store the results, then feed them back to GPT for cluster
     pattern_summaries = []
     for f in cluster_files:
         text = f.read().decode('utf-8', errors='ignore')
+        print(f"[DEBUG] /api/cluster reading file {f.filename}, length={len(text)}.")
         parse_prompt = f"Parse lines => parse_xrd_data:\n```\n{text}\n```"
-        parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name":"parse_xrd_data"})
+        parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
         parsed_data = []
         if parse_resp:
             fc = parse_resp["choices"][0]["message"].get("function_call")
-            if fc and fc["name"]=="parse_xrd_data":
+            if fc and fc["name"] == "parse_xrd_data":
                 args = safe_json_loads(fc["arguments"])
                 parsed_data = args.get("parsed_data", [])
 
-        # We'll just store filename + parsed_data
         pattern_summaries.append({
             "filename": f.filename,
             "parsed_data": parsed_data
         })
 
-    # Now pass them to GPT to cluster
     cluster_prompt = f"""
     We have multiple patterns (filename + data). Cluster them => cluster_files_gpt
     Patterns: {pattern_summaries}
     """
-    cluster_resp = call_gpt(cluster_prompt, [cluster_schema], {"name":"cluster_files_gpt"})
+    cluster_resp = call_gpt(cluster_prompt, [cluster_schema], {"name": "cluster_files_gpt"})
     clusters = []
     if cluster_resp:
         fc = cluster_resp["choices"][0]["message"].get("function_call")
-        if fc and fc["name"]=="cluster_files_gpt":
+        if fc and fc["name"] == "cluster_files_gpt":
             args = safe_json_loads(fc["arguments"])
             clusters = args.get("clusters", [])
 
@@ -439,13 +475,15 @@ def instrument_upload():
         return jsonify({'error': 'No xrdFile provided'}), 400
 
     text = f.read().decode('utf-8', errors='ignore')
+    print(f"[DEBUG] /api/instrument-upload got {len(text)} chars.")
     result = run_gpt_pipeline(text)
-    # Could notify user
     return jsonify(result), 200
 
 ##############################################################################
-# 5) Run
+# 5) Run (Local)
 ##############################################################################
 
 if __name__ == '__main__':
+    # If there's no OPENAI_API_KEY, you'll see a warning above.
+    # You can still run, but GPT calls will fail => empty results.
     app.run(host='0.0.0.0', port=8080, debug=True)
