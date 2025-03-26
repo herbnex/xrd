@@ -5,8 +5,16 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
 
-# openai.api_key = "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"  # Set your API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+##############################################################################
+# 0) Set up your OpenAI key via ENV variable
+##############################################################################
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    print("[WARNING] OPENAI_API_KEY environment variable not set! GPT calls will fail.")
+else:
+    openai.api_key = openai_api_key
+    print("[INFO] Loaded OPENAI_API_KEY from environment.")
+
 app = Flask(__name__)
 CORS(app)
 
@@ -125,7 +133,13 @@ quant_schema = {
                         "crystallite_size_nm": {"type": "number"},
                         "confidence_score": {"type": "number"}
                     },
-                    "required": ["phase_name", "weight_percent", "lattice_params", "crystallite_size_nm", "confidence_score"]
+                    "required": [
+                        "phase_name",
+                        "weight_percent",
+                        "lattice_params",
+                        "crystallite_size_nm",
+                        "confidence_score"
+                    ]
                 }
             }
         },
@@ -218,6 +232,10 @@ simulation_schema = {
 ##############################################################################
 
 def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
+    """
+    Invokes the OpenAI ChatCompletion with function calling.
+    If there's an error (like invalid key), logs it and returns None.
+    """
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
@@ -231,10 +249,14 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
         print(response)
         return response
     except Exception as e:
-        print(f"OpenAI error: {e}")
+        print(f"[ERROR] OpenAI error: {e}")
         return None
 
 def safe_json_loads(s):
+    """
+    Safely loads JSON from GPT function_call arguments,
+    cleaning out invisible control chars if necessary.
+    """
     s = s or ""
     cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
     try:
@@ -247,8 +269,24 @@ def safe_json_loads(s):
 ##############################################################################
 
 def run_gpt_pipeline(raw_text):
+    print("[DEBUG] run_gpt_pipeline called with raw_text length =", len(raw_text))
+    
+    if not openai.api_key:
+        print("[WARNING] No OpenAI API key set. GPT calls will fail => returning empty.")
+        return {
+            "parsedData": [],
+            "peaks": [],
+            "fittedPeaks": [],
+            "phases": [],
+            "quantResults": [],
+            "issuesFound": [],
+            "suggestedActions": [],
+            "finalReport": ""
+        }
+
     # 1) parse
     parse_prompt = f"Convert lines to (two_theta, intensity). Use parse_xrd_data:\n```\n{raw_text}\n```"
+    print("[DEBUG] parse_prompt:", parse_prompt)
     parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
     parsed_data = []
     if parse_resp:
@@ -349,6 +387,7 @@ def analyze_xrd():
         return jsonify({'error': 'No file uploaded'}), 400
 
     raw_text = f.read().decode('utf-8', errors='ignore')
+    print(f"[DEBUG] /api/analyze received file of length {len(raw_text)} chars.")
     result = run_gpt_pipeline(raw_text)
     return jsonify(result), 200
 
@@ -365,6 +404,7 @@ def simulate_pattern():
 
     struct_info = data['structure']
     prompt = f"Simulate an XRD pattern from structure: {struct_info} => simulate_pattern_gpt"
+    print("[DEBUG] /api/simulate, prompt:", prompt)
     sim_resp = call_gpt(prompt, [simulation_schema], {"name": "simulate_pattern_gpt"})
     parsed_data = []
     if sim_resp:
@@ -387,11 +427,12 @@ def cluster_analysis():
     """
     cluster_files = request.files.getlist('clusterFiles')
     if not cluster_files:
-        return jsonify({'error':'No files for cluster analysis'}), 400
+        return jsonify({'error': 'No files for cluster analysis'}), 400
 
     pattern_summaries = []
     for f in cluster_files:
         text = f.read().decode('utf-8', errors='ignore')
+        print(f"[DEBUG] /api/cluster reading file {f.filename}, length={len(text)}.")
         parse_prompt = f"Parse lines => parse_xrd_data:\n```\n{text}\n```"
         parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
         parsed_data = []
@@ -434,8 +475,8 @@ def instrument_upload():
         return jsonify({'error': 'No xrdFile provided'}), 400
 
     text = f.read().decode('utf-8', errors='ignore')
+    print(f"[DEBUG] /api/instrument-upload got {len(text)} chars.")
     result = run_gpt_pipeline(text)
-    # Could notify user
     return jsonify(result), 200
 
 ##############################################################################
@@ -443,5 +484,6 @@ def instrument_upload():
 ##############################################################################
 
 if __name__ == '__main__':
-    # Feel free to change port=8080 or 5000, etc.
+    # If there's no OPENAI_API_KEY, you'll see a warning above.
+    # You can still run, but GPT calls will fail => empty results.
     app.run(host='0.0.0.0', port=8080, debug=True)
