@@ -4,6 +4,7 @@ import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
+import numpy as np  # <-- for numeric processing
 
 ##############################################################################
 # 0) Configure OpenAI Key
@@ -17,7 +18,7 @@ CORS(app)
 # 1) GPT Function Schemas
 ##############################################################################
 
-# Existing schemas
+# Existing GPT schemas for parse, peaks, pattern, phases, quant, error, report, cluster, simulate
 parse_data_schema = {
     "name": "parse_xrd_data",
     "description": "Parses raw XRD text data into a list of {two_theta, intensity}. (No numeric libs, GPT does it)",
@@ -215,75 +216,6 @@ simulation_schema = {
 }
 
 ##############################################################################
-# Additional function schemas for advanced steps
-##############################################################################
-background_sub_schema = {
-    "name": "background_subtraction",
-    "description": "GPT-based background subtraction. Returns corrected_data with background removed.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "corrected_data": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "two_theta": {"type": "number"},
-                        "intensity": {"type": "number"}
-                    },
-                    "required": ["two_theta", "intensity"]
-                }
-            }
-        },
-        "required": ["corrected_data"]
-    }
-}
-
-smoothing_schema = {
-    "name": "smooth_data",
-    "description": "GPT-based smoothing. Returns smoothed_data with peaks preserved as best as possible.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "smoothed_data": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "two_theta": {"type": "number"},
-                        "intensity": {"type": "number"}
-                    },
-                    "required": ["two_theta", "intensity"]
-                }
-            }
-        },
-        "required": ["smoothed_data"]
-    }
-}
-
-kalpha2_schema = {
-    "name": "kalpha2_stripping",
-    "description": "Strips out Kα2 from Cu or other sources. Returns stripped_data.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "stripped_data": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "two_theta": {"type": "number"},
-                        "intensity": {"type": "number"}
-                    },
-                    "required": ["two_theta", "intensity"]
-                }
-            }
-        },
-        "required": ["stripped_data"]
-    }
-}
-
-##############################################################################
 # 2) GPT Call Helper
 ##############################################################################
 
@@ -297,7 +229,7 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
             messages=[{"role": "user", "content": prompt}],
             functions=functions,
             function_call=function_call,
-            temperature=0.0,
+            temperature=0.0,     # Keep deterministic
             max_tokens=max_tokens
         )
         print("=== RAW GPT RESPONSE ===")
@@ -308,6 +240,9 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
         return None
 
 def safe_json_loads(s):
+    """
+    Safely parse JSON from GPT, removing control characters if needed.
+    """
     s = s or ""
     cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
     try:
@@ -316,13 +251,82 @@ def safe_json_loads(s):
         return {}
 
 ##############################################################################
-# 3) Single-File Pipeline with GPT for Everything (Advanced)
+# 3) Numeric Helper Functions (Background, Smoothing, Kα2)
+##############################################################################
+
+def numeric_background_subtraction(data, poly_order=3):
+    """
+    Fit a polynomial to data (two_theta, intensity) and subtract it.
+    Uses NumPy for polynomial fitting. Returns new list with background removed.
+    """
+    if len(data) < poly_order + 1:
+        return data  # not enough points to fit
+
+    arr = np.array([[d["two_theta"], d["intensity"]] for d in data])
+    x = arr[:, 0]
+    y = arr[:, 1]
+
+    # Fit polynomial
+    coeffs = np.polyfit(x, y, poly_order)
+    p = np.poly1d(coeffs)
+    bg = p(x)
+
+    # Subtract
+    corrected_y = y - bg
+    corrected_y = np.clip(corrected_y, 0, None)  # no negatives
+
+    corrected_data = []
+    for i in range(len(data)):
+        corrected_data.append({
+            "two_theta": float(x[i]),
+            "intensity": float(corrected_y[i])
+        })
+    return corrected_data
+
+def numeric_smoothing(data, window_size=5):
+    """
+    Apply a simple moving average to intensities. Returns new list.
+    """
+    if len(data) < window_size:
+        return data
+
+    intensities = np.array([d["intensity"] for d in data])
+    kernel = np.ones(window_size) / window_size
+    smoothed = np.convolve(intensities, kernel, mode='same')
+
+    out = []
+    for i in range(len(data)):
+        out.append({
+            "two_theta": data[i]["two_theta"],
+            "intensity": float(smoothed[i])
+        })
+    return out
+
+def numeric_kalpha2_stripping(data, fraction=0.05):
+    """
+    Naively remove some fraction of the intensity to mimic Kα2 stripping.
+    """
+    out = []
+    for d in data:
+        new_i = d["intensity"] * (1.0 - fraction)
+        out.append({
+            "two_theta": d["two_theta"],
+            "intensity": float(new_i)
+        })
+    return out
+
+##############################################################################
+# 4) Single-File Pipeline: Numeric + GPT
 ##############################################################################
 
 def run_gpt_pipeline(raw_text):
-    # ---------------------------------------------------------
-    # (1) PARSE
-    # ---------------------------------------------------------
+    """
+    This pipeline now uses:
+      - GPT to parse the raw text
+      - Numeric steps for background subtraction, smoothing, Kα2 strip
+      - GPT for peak detection, pattern decomp, phase ID, quant, error detection, final report
+    """
+    # 1) PARSE with GPT
     parse_prompt = (
         "Convert lines to (two_theta, intensity). "
         "Even if there's a header or metadata, extract numeric pairs. "
@@ -339,56 +343,18 @@ def run_gpt_pipeline(raw_text):
     if not parsed_data:
         return {"error": "No valid data found", "finalReport": "No data to analyze."}
 
-    # ---------------------------------------------------------
-    # (2) BACKGROUND SUBTRACTION
-    # ---------------------------------------------------------
-    bg_prompt = (
-        "Perform background subtraction on the parsed data => background_subtraction.\n"
-        f"parsed_data={parsed_data}"
-    )
-    bg_resp = call_gpt(bg_prompt, [background_sub_schema], {"name": "background_subtraction"})
-    bg_corrected_data = parsed_data
-    if bg_resp:
-        fc = bg_resp["choices"][0]["message"].get("function_call")
-        if fc and fc["name"] == "background_subtraction":
-            args = safe_json_loads(fc["arguments"])
-            bg_corrected_data = args.get("corrected_data", parsed_data)
+    # 2) Numeric background subtraction
+    bg_corrected_data = numeric_background_subtraction(parsed_data)
 
-    # ---------------------------------------------------------
-    # (3) SMOOTHING
-    # ---------------------------------------------------------
-    smoothing_prompt = (
-        "Apply smoothing while preserving peaks => smooth_data.\n"
-        f"bg_corrected_data={bg_corrected_data}"
-    )
-    smooth_resp = call_gpt(smoothing_prompt, [smoothing_schema], {"name": "smooth_data"})
-    smoothed_data = bg_corrected_data
-    if smooth_resp:
-        fc = smooth_resp["choices"][0]["message"].get("function_call")
-        if fc and fc["name"] == "smooth_data":
-            args = safe_json_loads(fc["arguments"])
-            smoothed_data = args.get("smoothed_data", bg_corrected_data)
+    # 3) Numeric smoothing
+    smoothed_data = numeric_smoothing(bg_corrected_data)
 
-    # ---------------------------------------------------------
-    # (4) Kα2 STRIPPING
-    # ---------------------------------------------------------
-    ka2_prompt = (
-        "Strip Kα2 from the smoothed data => kalpha2_stripping.\n"
-        f"smoothed_data={smoothed_data}"
-    )
-    ka2_resp = call_gpt(ka2_prompt, [kalpha2_schema], {"name": "kalpha2_stripping"})
-    stripped_data = smoothed_data
-    if ka2_resp:
-        fc = ka2_resp["choices"][0]["message"].get("function_call")
-        if fc and fc["name"] == "kalpha2_stripping":
-            args = safe_json_loads(fc["arguments"])
-            stripped_data = args.get("stripped_data", smoothed_data)
+    # 4) Numeric Kα2 stripping
+    stripped_data = numeric_kalpha2_stripping(smoothed_data)
 
-    # ---------------------------------------------------------
-    # (5) PEAK DETECTION
-    # ---------------------------------------------------------
+    # 5) GPT - PEAK DETECTION
     detect_prompt = (
-        "We have the Kα1-only data. Identify major peaks => detect_peaks.\n"
+        "Now that we've done numeric background subtraction, smoothing, Kα2 strip, detect major peaks => detect_peaks.\n"
         f"data={stripped_data}"
     )
     detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name": "detect_peaks"})
@@ -399,9 +365,7 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             peaks = args.get("peaks", [])
 
-    # ---------------------------------------------------------
-    # (6) PATTERN DECOMPOSITION
-    # ---------------------------------------------------------
+    # 6) GPT - PATTERN DECOMPOSITION
     pattern_prompt = (
         "Given these detected peaks, do advanced pattern decomposition => pattern_decomposition.\n"
         f"peaks={peaks}"
@@ -414,9 +378,7 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             fitted_peaks = args.get("fitted_peaks", [])
 
-    # ---------------------------------------------------------
-    # (7) PHASE IDENTIFICATION
-    # ---------------------------------------------------------
+    # 7) GPT - PHASE IDENTIFICATION
     example_phases = """
 "phases": [
   { "phase_name": "Quartz", "confidence": 0.8 },
@@ -425,10 +387,9 @@ def run_gpt_pipeline(raw_text):
 """
     phase_prompt = (
         "We have fitted peaks from an XRD pattern. "
-        "Identify 1-4 possible phases. Example:\n"
+        "Identify possible phases (1-4). Example:\n"
         + example_phases +
-        "\nfitted_peaks={fitted_peaks}\n"
-        "=> phase_identification"
+        f"\nfitted_peaks={fitted_peaks}\n=> phase_identification"
     )
     phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name": "phase_identification"})
     phases = []
@@ -437,11 +398,10 @@ def run_gpt_pipeline(raw_text):
         if fc and fc["name"] == "phase_identification":
             args = safe_json_loads(fc["arguments"])
             phases = args.get("phases", [])
-
-    # fallback if empty
     if not phases:
+        # fallback
         fallback_prompt = (
-            "No phases returned. Guess 2-3 typical phases => phase_identification.\n"
+            "No phases returned, guess 2-3 typical phases => phase_identification.\n"
             f"fitted_peaks={fitted_peaks}"
         )
         fb_resp = call_gpt(fallback_prompt, [phase_id_schema], {"name": "phase_identification"})
@@ -453,9 +413,7 @@ def run_gpt_pipeline(raw_text):
                 if maybe_phases:
                     phases = maybe_phases
 
-    # ---------------------------------------------------------
-    # (8) QUANTITATIVE ANALYSIS (Rietveld-like)
-    # ---------------------------------------------------------
+    # 8) GPT - QUANT ANALYSIS
     example_quant = """
 "quant_results": [
   {
@@ -468,7 +426,7 @@ def run_gpt_pipeline(raw_text):
 ]
 """
     quant_prompt = (
-        "Given these identified phases, do a Rietveld-like quant => quantitative_analysis.\n"
+        "Given identified phases, do a Rietveld-like quant => quantitative_analysis.\n"
         f"Example:\n{example_quant}\nphases={phases}"
     )
     quant_resp = call_gpt(quant_prompt, [quant_schema], {"name": "quantitative_analysis"})
@@ -479,11 +437,9 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             quant_results = args.get("quant_results", [])
 
-    # ---------------------------------------------------------
-    # (9) ERROR DETECTION
-    # ---------------------------------------------------------
+    # 9) GPT - ERROR DETECTION
     error_prompt = (
-        "Check anomalies in numeric data. Just note them => error_detection.\n"
+        "Check anomalies in numeric data => error_detection.\n"
         f"parsed_data={parsed_data}"
     )
     error_resp = call_gpt(error_prompt, [error_detection_schema], {"name": "error_detection"})
@@ -496,13 +452,11 @@ def run_gpt_pipeline(raw_text):
             issues_found = args.get("issues_found", [])
             suggested_actions = args.get("suggested_actions", [])
 
-    # ---------------------------------------------------------
-    # (10) FINAL REPORT
-    # ---------------------------------------------------------
+    # 10) GPT - FINAL REPORT
     final_prompt = (
-        "Create a final text-based summary of all results => generate_final_report.\n"
-        f"parsed_data={len(parsed_data)}, fitted_peaks={len(fitted_peaks)}, phases={phases}, quant={quant_results}, "
-        f"issues={issues_found}, suggestions={suggested_actions}"
+        "Create a final text-based summary => generate_final_report.\n"
+        f"parsed_data={len(parsed_data)}, peaks={len(peaks)}, fitted_peaks={len(fitted_peaks)}, "
+        f"phases={phases}, quant={quant_results}, issues={issues_found}, suggestions={suggested_actions}"
     )
     report_resp = call_gpt(final_prompt, [report_schema], {"name": "generate_final_report"})
     final_report = ""
@@ -512,7 +466,7 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             final_report = args.get("report_text", "")
 
-    # Return everything
+    # Return the full set of results
     return {
         "parsedData": parsed_data,
         "bgCorrectedData": bg_corrected_data,
@@ -528,13 +482,13 @@ def run_gpt_pipeline(raw_text):
     }
 
 ##############################################################################
-# 4) Flask Endpoints
+# 5) Flask Endpoints
 ##############################################################################
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_xrd():
     """
-    Single-file approach, letting GPT do everything (advanced steps).
+    Single-file approach, letting GPT do everything (plus numeric steps).
     """
     f = request.files.get('xrdFile')
     if not f:
@@ -575,7 +529,7 @@ def simulate_pattern():
 def cluster_analysis():
     """
     GPT-based cluster of multiple .xy or any extension.
-    We'll parse each file with parse_xrd_data, then feed them back to GPT => cluster_files_gpt
+    We'll parse each file with parse_xrd_data, then feed them to GPT => cluster_files_gpt
     """
     cluster_files = request.files.getlist('clusterFiles')
     if not cluster_files:
@@ -627,8 +581,12 @@ def instrument_upload():
     return jsonify(result), 200
 
 ##############################################################################
-# 5) Run
+# 6) Run
 ##############################################################################
 
 if __name__ == '__main__':
+    # Example usage:
+    #   pip install flask flask-cors openai numpy
+    #   export OPENAI_API_KEY=...
+    #   python app.py
     app.run(host='0.0.0.0', port=8080, debug=True)
