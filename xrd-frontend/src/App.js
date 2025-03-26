@@ -73,6 +73,7 @@ function unifyExpFittedData(expData, fittedPeaks) {
   return Array.from(map.values()).sort((a, b) => a.two_theta - b.two_theta);
 }
 
+// Drawer widths
 const LEFT_DRAWER_WIDTH = 260;
 const RIGHT_DRAWER_WIDTH = 300;
 
@@ -83,10 +84,22 @@ const RootBox = styled('div')({
   backgroundColor: '#f9f9f9'
 });
 
+/** Main content that auto-adjusts margin based on drawer states. */
+const MainContent = styled('main')(({ theme, leftOpen, rightOpen }) => ({
+  flexGrow: 1,
+  marginTop: theme.spacing(8), // space for AppBar
+  marginLeft: leftOpen ? LEFT_DRAWER_WIDTH : 0,
+  marginRight: rightOpen ? RIGHT_DRAWER_WIDTH : 0,
+  transition: theme.transitions.create(['margin'], {
+    easing: theme.transitions.easing.sharp,
+    duration: theme.transitions.duration.leavingScreen
+  }),
+}));
+
 export default function App() {
-  // Left drawer always "temporary"
+  // Left drawer (temporary)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(true);
-  // Right drawer is persistent (can toggle)
+  // Right drawer (persistent)
   const [rightDrawerOpen, setRightDrawerOpen] = useState(true);
 
   // File states
@@ -101,11 +114,12 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Merge data
+  // Merge data for chart
   const expData = analysisResult?.parsedData || [];
   const fittedPeaks = analysisResult?.fittedPeaks || [];
   const chartData = unifyExpFittedData(expData, fittedPeaks);
 
+  // For bar chart
   const quantData = analysisResult?.quantResults?.map(q => ({
     name: q.phase_name,
     wtPercent: q.weight_percent
@@ -130,7 +144,7 @@ export default function App() {
     ]
   };
 
-  // API base URL on Render
+  // Endpoint base URL
   const API_BASE = 'https://xrd-backend-enuq.onrender.com';
 
   // Drawer toggles
@@ -277,6 +291,7 @@ export default function App() {
         </Typography>
         <Divider sx={{ mb: 2 }} />
 
+        {/* Single-file upload */}
         <Typography variant="subtitle1" sx={{ mb: 1 }}>One-Click Analysis</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Single File
@@ -291,6 +306,7 @@ export default function App() {
 
         <Divider sx={{ my: 2 }} />
 
+        {/* Multi-file cluster */}
         <Typography variant="subtitle1" sx={{ mb: 1 }}>Multi-File Cluster</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Select Files
@@ -307,6 +323,7 @@ export default function App() {
 
         <Divider sx={{ my: 2 }} />
 
+        {/* Simulation */}
         <Typography variant="subtitle1" sx={{ mb: 1 }}>Simulation</Typography>
         <TextField
           multiline
@@ -347,6 +364,7 @@ export default function App() {
         )}
         {analysisResult && (
           <Box sx={{ overflowY: 'auto' }}>
+            {/* Phase identification */}
             {analysisResult.phases?.length > 0 && (
               <>
                 <Typography variant="subtitle1">Phases Identified</Typography>
@@ -356,13 +374,15 @@ export default function App() {
                     Confidence: {(ph.confidence * 100).toFixed(1)}%
                   </Typography>
                 ))}
+                <Divider sx={{ my: 2 }} />
               </>
             )}
 
+            {/* Fitted peaks */}
             {analysisResult.fittedPeaks?.length > 0 && (
               <>
-                <Typography variant="subtitle1" sx={{ mt: 2 }}>Fitted Peaks</Typography>
-                <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+                <Typography variant="subtitle1">Fitted Peaks</Typography>
+                <Box sx={{ maxHeight: 200, overflowY: 'auto', mb: 2 }}>
                   <table style={{ width: '100%', fontSize: '0.8rem' }}>
                     <thead>
                       <tr>
@@ -382,12 +402,14 @@ export default function App() {
                     </tbody>
                   </table>
                 </Box>
+                <Divider sx={{ mb: 2 }} />
               </>
             )}
 
+            {/* Quantitative (Rietveld-like) */}
             {analysisResult.quantResults?.length > 0 && (
               <>
-                <Typography variant="subtitle1" sx={{ mt: 2 }}>Quantitative Analysis</Typography>
+                <Typography variant="subtitle1">Quantitative Analysis</Typography>
                 <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
                   <table style={{ width: '100%', fontSize: '0.8rem' }}>
                     <thead>
@@ -395,7 +417,7 @@ export default function App() {
                         <th>Phase</th>
                         <th>wt%</th>
                         <th>Lattice</th>
-                        <th>Crystallite(nm)</th>
+                        <th>Crystallite (nm)</th>
                         <th>Conf.</th>
                       </tr>
                     </thead>
@@ -419,14 +441,7 @@ export default function App() {
       </Drawer>
 
       {/* MAIN CONTENT (center) */}
-      <Box sx={{
-        flexGrow: 1,
-        pt: 8, // offset for AppBar
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        overflow: 'auto'
-      }}>
+      <MainContent leftOpen={leftDrawerOpen} rightOpen={rightDrawerOpen}>
         <Container maxWidth="lg" sx={{ py: 2 }}>
           {errorMessage && (
             <Alert severity="error" sx={{ mb: 2 }}>
@@ -448,7 +463,7 @@ export default function App() {
           )}
 
           {/* Welcome Card */}
-          {!isLoading && !analysisResult && (
+          {!isLoading && !analysisResult && !clusterResult && !simulationResult && (
             <Card variant="outlined" sx={{ maxWidth: 600, mx: 'auto', mt: 4 }}>
               <CardContent>
                 <Typography variant="h5" gutterBottom>
@@ -458,6 +473,7 @@ export default function App() {
                 <Typography variant="body1">
                   Please upload a single XRD file to analyze, or multiple files to cluster. 
                   You can also run a simulation by entering a structure in the left drawer.
+                  The center area auto-adjusts when drawers are opened or closed.
                 </Typography>
               </CardContent>
             </Card>
@@ -595,7 +611,7 @@ export default function App() {
             </Card>
           )}
         </Container>
-      </Box>
+      </MainContent>
     </RootBox>
   );
 }

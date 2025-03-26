@@ -17,6 +17,7 @@ CORS(app)
 # 1) GPT Function Schemas
 ##############################################################################
 
+# Existing schemas
 parse_data_schema = {
     "name": "parse_xrd_data",
     "description": "Parses raw XRD text data into a list of {two_theta, intensity}. (No numeric libs, GPT does it)",
@@ -214,6 +215,75 @@ simulation_schema = {
 }
 
 ##############################################################################
+# Additional function schemas for advanced steps
+##############################################################################
+background_sub_schema = {
+    "name": "background_subtraction",
+    "description": "GPT-based background subtraction. Returns corrected_data with background removed.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "corrected_data": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "two_theta": {"type": "number"},
+                        "intensity": {"type": "number"}
+                    },
+                    "required": ["two_theta", "intensity"]
+                }
+            }
+        },
+        "required": ["corrected_data"]
+    }
+}
+
+smoothing_schema = {
+    "name": "smooth_data",
+    "description": "GPT-based smoothing. Returns smoothed_data with peaks preserved as best as possible.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "smoothed_data": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "two_theta": {"type": "number"},
+                        "intensity": {"type": "number"}
+                    },
+                    "required": ["two_theta", "intensity"]
+                }
+            }
+        },
+        "required": ["smoothed_data"]
+    }
+}
+
+kalpha2_schema = {
+    "name": "kalpha2_stripping",
+    "description": "Strips out Kα2 from Cu or other sources. Returns stripped_data.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "stripped_data": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "two_theta": {"type": "number"},
+                        "intensity": {"type": "number"}
+                    },
+                    "required": ["two_theta", "intensity"]
+                }
+            }
+        },
+        "required": ["stripped_data"]
+    }
+}
+
+##############################################################################
 # 2) GPT Call Helper
 ##############################################################################
 
@@ -227,7 +297,7 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
             messages=[{"role": "user", "content": prompt}],
             functions=functions,
             function_call=function_call,
-            temperature=0.0,     # Keep deterministic
+            temperature=0.0,
             max_tokens=max_tokens
         )
         print("=== RAW GPT RESPONSE ===")
@@ -238,9 +308,6 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
         return None
 
 def safe_json_loads(s):
-    """
-    Safely parse JSON from GPT, removing control characters if needed.
-    """
     s = s or ""
     cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
     try:
@@ -249,11 +316,13 @@ def safe_json_loads(s):
         return {}
 
 ##############################################################################
-# 3) Single-File Pipeline with GPT for Everything
+# 3) Single-File Pipeline with GPT for Everything (Advanced)
 ##############################################################################
 
 def run_gpt_pipeline(raw_text):
-    # 1) parse
+    # ---------------------------------------------------------
+    # (1) PARSE
+    # ---------------------------------------------------------
     parse_prompt = (
         "Convert lines to (two_theta, intensity). "
         "Even if there's a header or metadata, extract numeric pairs. "
@@ -267,13 +336,60 @@ def run_gpt_pipeline(raw_text):
         if fc and fc["name"] == "parse_xrd_data":
             args = safe_json_loads(fc["arguments"])
             parsed_data = args.get("parsed_data", [])
+    if not parsed_data:
+        return {"error": "No valid data found", "finalReport": "No data to analyze."}
 
-    # 2) detect peaks
+    # ---------------------------------------------------------
+    # (2) BACKGROUND SUBTRACTION
+    # ---------------------------------------------------------
+    bg_prompt = (
+        "Perform background subtraction on the parsed data => background_subtraction.\n"
+        f"parsed_data={parsed_data}"
+    )
+    bg_resp = call_gpt(bg_prompt, [background_sub_schema], {"name": "background_subtraction"})
+    bg_corrected_data = parsed_data
+    if bg_resp:
+        fc = bg_resp["choices"][0]["message"].get("function_call")
+        if fc and fc["name"] == "background_subtraction":
+            args = safe_json_loads(fc["arguments"])
+            bg_corrected_data = args.get("corrected_data", parsed_data)
+
+    # ---------------------------------------------------------
+    # (3) SMOOTHING
+    # ---------------------------------------------------------
+    smoothing_prompt = (
+        "Apply smoothing while preserving peaks => smooth_data.\n"
+        f"bg_corrected_data={bg_corrected_data}"
+    )
+    smooth_resp = call_gpt(smoothing_prompt, [smoothing_schema], {"name": "smooth_data"})
+    smoothed_data = bg_corrected_data
+    if smooth_resp:
+        fc = smooth_resp["choices"][0]["message"].get("function_call")
+        if fc and fc["name"] == "smooth_data":
+            args = safe_json_loads(fc["arguments"])
+            smoothed_data = args.get("smoothed_data", bg_corrected_data)
+
+    # ---------------------------------------------------------
+    # (4) Kα2 STRIPPING
+    # ---------------------------------------------------------
+    ka2_prompt = (
+        "Strip Kα2 from the smoothed data => kalpha2_stripping.\n"
+        f"smoothed_data={smoothed_data}"
+    )
+    ka2_resp = call_gpt(ka2_prompt, [kalpha2_schema], {"name": "kalpha2_stripping"})
+    stripped_data = smoothed_data
+    if ka2_resp:
+        fc = ka2_resp["choices"][0]["message"].get("function_call")
+        if fc and fc["name"] == "kalpha2_stripping":
+            args = safe_json_loads(fc["arguments"])
+            stripped_data = args.get("stripped_data", smoothed_data)
+
+    # ---------------------------------------------------------
+    # (5) PEAK DETECTION
+    # ---------------------------------------------------------
     detect_prompt = (
-        "We have this parsed data. Identify major peaks. "
-        "Even if intensities jump, do your best to find notable peaks. "
-        f"parsed_data = {parsed_data}\n"
-        "=> detect_peaks"
+        "We have the Kα1-only data. Identify major peaks => detect_peaks.\n"
+        f"data={stripped_data}"
     )
     detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name": "detect_peaks"})
     peaks = []
@@ -283,12 +399,12 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             peaks = args.get("peaks", [])
 
-    # 3) pattern decomposition
+    # ---------------------------------------------------------
+    # (6) PATTERN DECOMPOSITION
+    # ---------------------------------------------------------
     pattern_prompt = (
-        "Given these raw peaks, do advanced pattern decomposition. "
-        "Ignore potential anomalies, still attempt to fit them. "
-        f"peaks = {peaks}\n"
-        "=> pattern_decomposition"
+        "Given these detected peaks, do advanced pattern decomposition => pattern_decomposition.\n"
+        f"peaks={peaks}"
     )
     pattern_resp = call_gpt(pattern_prompt, [pattern_decomp_schema], {"name": "pattern_decomposition"})
     fitted_peaks = []
@@ -298,9 +414,9 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             fitted_peaks = args.get("fitted_peaks", [])
 
-    # 4) phase identification
-    # We add a short "few-shot" style example to encourage GPT to produce something
-    # even if the data is imperfect.
+    # ---------------------------------------------------------
+    # (7) PHASE IDENTIFICATION
+    # ---------------------------------------------------------
     example_phases = """
 "phases": [
   { "phase_name": "Quartz", "confidence": 0.8 },
@@ -309,11 +425,9 @@ def run_gpt_pipeline(raw_text):
 """
     phase_prompt = (
         "We have fitted peaks from an XRD pattern. "
-        "Always identify 1-4 possible phases (like Quartz, Feldspar, Calcite, etc.). "
-        "Even if there's data noise, provide your best guess. Example:\n"
+        "Identify 1-4 possible phases. Example:\n"
         + example_phases +
-        "\nNow do the same for: "
-        f"fitted_peaks={fitted_peaks}\n"
+        "\nfitted_peaks={fitted_peaks}\n"
         "=> phase_identification"
     )
     phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name": "phase_identification"})
@@ -324,25 +438,24 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             phases = args.get("phases", [])
 
-    # If GPT returns an empty list, let's do a fallback prompt
+    # fallback if empty
     if not phases:
-        fallback_phase_prompt = (
-            "You returned no phases before. Please guess 2-3 possible phases anyway, "
-            "using typical minerals. Provide non-empty 'phases'. "
-            f"fitted_peaks={fitted_peaks}\n"
-            "=> phase_identification"
+        fallback_prompt = (
+            "No phases returned. Guess 2-3 typical phases => phase_identification.\n"
+            f"fitted_peaks={fitted_peaks}"
         )
-        fallback_resp = call_gpt(fallback_phase_prompt, [phase_id_schema], {"name": "phase_identification"})
-        if fallback_resp:
-            fc2 = fallback_resp["choices"][0]["message"].get("function_call")
+        fb_resp = call_gpt(fallback_prompt, [phase_id_schema], {"name": "phase_identification"})
+        if fb_resp:
+            fc2 = fb_resp["choices"][0]["message"].get("function_call")
             if fc2 and fc2["name"] == "phase_identification":
                 args2 = safe_json_loads(fc2["arguments"])
                 maybe_phases = args2.get("phases", [])
                 if maybe_phases:
                     phases = maybe_phases
 
-    # 5) quant
-    # Similarly, we nudge GPT to produce a Rietveld-like quant analysis
+    # ---------------------------------------------------------
+    # (8) QUANTITATIVE ANALYSIS (Rietveld-like)
+    # ---------------------------------------------------------
     example_quant = """
 "quant_results": [
   {
@@ -355,11 +468,8 @@ def run_gpt_pipeline(raw_text):
 ]
 """
     quant_prompt = (
-        "Given these identified phases, do a Rietveld-like quant. "
-        "Always provide at least one phase with weight_percent, lattice_params, crystallite_size_nm, confidence_score. "
-        f"Example:\n{example_quant}\n"
-        f"phases = {phases}\n"
-        "=> quantitative_analysis"
+        "Given these identified phases, do a Rietveld-like quant => quantitative_analysis.\n"
+        f"Example:\n{example_quant}\nphases={phases}"
     )
     quant_resp = call_gpt(quant_prompt, [quant_schema], {"name": "quantitative_analysis"})
     quant_results = []
@@ -369,13 +479,12 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             quant_results = args.get("quant_results", [])
 
-    # 6) error detection
-    # We can tone down negativity about "jumps" or "anomalies" by softening the prompt:
+    # ---------------------------------------------------------
+    # (9) ERROR DETECTION
+    # ---------------------------------------------------------
     error_prompt = (
-        "Check anomalies in numeric data if any. "
-        "But do not refuse to proceed if intensities jump. Just note them. "
-        f"parsed_data={parsed_data}\n"
-        "=> error_detection"
+        "Check anomalies in numeric data. Just note them => error_detection.\n"
+        f"parsed_data={parsed_data}"
     )
     error_resp = call_gpt(error_prompt, [error_detection_schema], {"name": "error_detection"})
     issues_found = []
@@ -387,12 +496,13 @@ def run_gpt_pipeline(raw_text):
             issues_found = args.get("issues_found", [])
             suggested_actions = args.get("suggested_actions", [])
 
-    # 7) final report
+    # ---------------------------------------------------------
+    # (10) FINAL REPORT
+    # ---------------------------------------------------------
     final_prompt = (
-        "Create a final text-based summary of all results. Even if data had anomalies, provide a helpful conclusion.\n"
-        f"parsed_data={parsed_data}, peaks={peaks}, fitted_peaks={fitted_peaks}, "
-        f"phases={phases}, quant={quant_results}, issues={issues_found}, suggestions={suggested_actions}.\n"
-        "=> generate_final_report"
+        "Create a final text-based summary of all results => generate_final_report.\n"
+        f"parsed_data={len(parsed_data)}, fitted_peaks={len(fitted_peaks)}, phases={phases}, quant={quant_results}, "
+        f"issues={issues_found}, suggestions={suggested_actions}"
     )
     report_resp = call_gpt(final_prompt, [report_schema], {"name": "generate_final_report"})
     final_report = ""
@@ -402,8 +512,12 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             final_report = args.get("report_text", "")
 
+    # Return everything
     return {
         "parsedData": parsed_data,
+        "bgCorrectedData": bg_corrected_data,
+        "smoothedData": smoothed_data,
+        "strippedData": stripped_data,
         "peaks": peaks,
         "fittedPeaks": fitted_peaks,
         "phases": phases,
@@ -420,7 +534,7 @@ def run_gpt_pipeline(raw_text):
 @app.route('/api/analyze', methods=['POST'])
 def analyze_xrd():
     """
-    Single-file approach, letting GPT do everything.
+    Single-file approach, letting GPT do everything (advanced steps).
     """
     f = request.files.get('xrdFile')
     if not f:
