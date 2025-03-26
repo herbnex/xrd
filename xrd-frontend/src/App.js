@@ -130,8 +130,8 @@ export default function App() {
     ]
   };
 
-  // IMPORTANT: Point to your local Flask server
-  const API_BASE = 'http://127.0.0.1:8080';
+  // API base URL on Render
+  const API_BASE = 'https://xrd-backend-enuq.onrender.com';
 
   // Drawer toggles
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
@@ -147,7 +147,6 @@ export default function App() {
     setSimulationResult(null);
     setErrorMessage('');
   };
-
   const runAnalyze = async () => {
     if (!singleFile) return;
     setIsLoading(true);
@@ -166,7 +165,6 @@ export default function App() {
       });
       if (!resp.ok) throw new Error(`Analyze error: ${resp.statusText}`);
       const data = await resp.json();
-      console.log("Analysis result:", data);
       setAnalysisResult(data);
     } catch (err) {
       console.error(err);
@@ -187,7 +185,6 @@ export default function App() {
     setSimulationResult(null);
     setErrorMessage('');
   };
-
   const runCluster = async () => {
     if (!multiFiles.length) return;
     setIsLoading(true);
@@ -283,8 +280,7 @@ export default function App() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>One-Click Analysis</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Single File
-          {/* NOTE: no "accept" attribute => can upload any extension */}
-          <input hidden type="file" onChange={handleSingleFileChange} />
+          <input hidden type="file" accept=".xy,.txt" onChange={handleSingleFileChange} />
         </Button>
         {singleFile && (
           <Typography sx={{ fontSize: 12, mb: 1 }}>{singleFile.name}</Typography>
@@ -298,8 +294,7 @@ export default function App() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>Multi-File Cluster</Typography>
         <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Select Files
-          {/* again, no accept => any extension */}
-          <input hidden type="file" multiple onChange={handleMultiFileChange} />
+          <input hidden type="file" multiple accept=".xy,.txt" onChange={handleMultiFileChange} />
         </Button>
         {multiFiles.length > 0 && (
           <Typography sx={{ fontSize: 12, mb: 1 }}>
@@ -453,7 +448,7 @@ export default function App() {
           )}
 
           {/* Welcome Card */}
-          {!isLoading && !analysisResult && !clusterResult && !simulationResult && (
+          {!isLoading && !analysisResult && (
             <Card variant="outlined" sx={{ maxWidth: 600, mx: 'auto', mt: 4 }}>
               <CardContent>
                 <Typography variant="h5" gutterBottom>
