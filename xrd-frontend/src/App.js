@@ -168,7 +168,7 @@ export default function App() {
   };
 
   // In a real app, change to your actual backend URL
-  const API_BASE = 'http://localhost:8080';
+  const API_BASE = 'https://xrd-backend-enuq.onrender.com';
 
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
   const toggleRightDrawer = () => setRightDrawerOpen(!rightDrawerOpen);
