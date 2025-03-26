@@ -70,7 +70,7 @@ function unifyExpFittedData(expData, fittedPeaks) {
       existing.fittedIntensity = fp.intensity;
     }
   });
-  return Array.from(map.values()).sort((a,b) => a.two_theta - b.two_theta);
+  return Array.from(map.values()).sort((a, b) => a.two_theta - b.two_theta);
 }
 
 const LEFT_DRAWER_WIDTH = 260;
@@ -111,24 +111,27 @@ export default function App() {
     wtPercent: q.weight_percent
   })) || [];
 
-  // React Grid Layout
+  // React Grid Layout configuration
   const layouts = {
     lg: [
-      { i:'diffPattern', x:0, y:0, w:6, h:10 },
-      { i:'phaseComp',  x:6, y:0, w:6, h:10 },
-      { i:'finalReport',x:0, y:10,w:12,h:8 }
+      { i: 'diffPattern', x: 0, y: 0, w: 6, h: 10 },
+      { i: 'phaseComp', x: 6, y: 0, w: 6, h: 10 },
+      { i: 'finalReport', x: 0, y: 10, w: 12, h: 8 }
     ],
     md: [
-      { i:'diffPattern', x:0, y:0, w:6, h:10 },
-      { i:'phaseComp',  x:6, y:0, w:6, h:10 },
-      { i:'finalReport',x:0, y:10,w:12,h:8 }
+      { i: 'diffPattern', x: 0, y: 0, w: 6, h: 10 },
+      { i: 'phaseComp', x: 6, y: 0, w: 6, h: 10 },
+      { i: 'finalReport', x: 0, y: 10, w: 12, h: 8 }
     ],
     sm: [
-      { i:'diffPattern', x:0, y:0, w:6, h:10 },
-      { i:'phaseComp',  x:0, y:10,w:6, h:10 },
-      { i:'finalReport',x:0, y:20,w:6, h:8 }
+      { i: 'diffPattern', x: 0, y: 0, w: 6, h: 10 },
+      { i: 'phaseComp', x: 0, y: 10, w: 6, h: 10 },
+      { i: 'finalReport', x: 0, y: 20, w: 6, h: 8 }
     ]
   };
+
+  // IMPORTANT: Point to your local Flask server
+  const API_BASE = 'http://127.0.0.1:8080';
 
   // Drawer toggles
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
@@ -144,8 +147,9 @@ export default function App() {
     setSimulationResult(null);
     setErrorMessage('');
   };
+
   const runAnalyze = async () => {
-    if(!singleFile) return;
+    if (!singleFile) return;
     setIsLoading(true);
     setAnalysisResult(null);
     setClusterResult(null);
@@ -156,14 +160,15 @@ export default function App() {
       const formData = new FormData();
       formData.append('xrdFile', singleFile);
 
-      const resp = await fetch('http://127.0.0.1:5000/api/analyze',{
-        method:'POST',
-        body:formData
+      const resp = await fetch(`${API_BASE}/api/analyze`, {
+        method: 'POST',
+        body: formData
       });
-      if(!resp.ok) throw new Error(`Analyze error: ${resp.statusText}`);
+      if (!resp.ok) throw new Error(`Analyze error: ${resp.statusText}`);
       const data = await resp.json();
+      console.log("Analysis result:", data);
       setAnalysisResult(data);
-    } catch(err){
+    } catch (err) {
       console.error(err);
       setErrorMessage('Analysis failed.');
     } finally {
@@ -182,8 +187,9 @@ export default function App() {
     setSimulationResult(null);
     setErrorMessage('');
   };
+
   const runCluster = async () => {
-    if(!multiFiles.length) return;
+    if (!multiFiles.length) return;
     setIsLoading(true);
     setAnalysisResult(null);
     setClusterResult(null);
@@ -191,15 +197,15 @@ export default function App() {
     setErrorMessage('');
     try {
       const formData = new FormData();
-      multiFiles.forEach(f=> formData.append('clusterFiles', f));
-      const resp = await fetch('http://127.0.0.1:5000/api/cluster',{
-        method:'POST',
-        body:formData
+      multiFiles.forEach(f => formData.append('clusterFiles', f));
+      const resp = await fetch(`${API_BASE}/api/cluster`, {
+        method: 'POST',
+        body: formData
       });
-      if(!resp.ok) throw new Error(`Cluster error: ${resp.statusText}`);
+      if (!resp.ok) throw new Error(`Cluster error: ${resp.statusText}`);
       const data = await resp.json();
       setClusterResult(data);
-    } catch(err){
+    } catch (err) {
       console.error(err);
       setErrorMessage('Cluster failed.');
     } finally {
@@ -211,7 +217,7 @@ export default function App() {
    * Simulation
    *******************************************************/
   const runSimulate = async () => {
-    if(!simulationText.trim()) return;
+    if (!simulationText.trim()) return;
     setIsLoading(true);
     setAnalysisResult(null);
     setClusterResult(null);
@@ -219,15 +225,15 @@ export default function App() {
     setErrorMessage('');
 
     try {
-      const resp = await fetch('http://127.0.0.1:5000/api/simulate',{
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
+      const resp = await fetch(`${API_BASE}/api/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ structure: simulationText })
       });
-      if(!resp.ok) throw new Error(`Simulation error: ${resp.statusText}`);
+      if (!resp.ok) throw new Error(`Simulation error: ${resp.statusText}`);
       const data = await resp.json();
       setSimulationResult(data);
-    } catch(err){
+    } catch (err) {
       console.error(err);
       setErrorMessage('Simulation error.');
     } finally {
@@ -242,10 +248,10 @@ export default function App() {
     <RootBox>
       <AppBar position="fixed" sx={{ zIndex: (th) => th.zIndex.drawer + 1 }}>
         <Toolbar>
-          <IconButton edge="start" color="inherit" onClick={toggleLeftDrawer} sx={{mr:2}}>
+          <IconButton edge="start" color="inherit" onClick={toggleLeftDrawer} sx={{ mr: 2 }}>
             <MenuIcon />
           </IconButton>
-          <Typography variant="h6" sx={{flexGrow:1}}>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
             XRD Dashboard (All GPT)
           </Typography>
           <Button color="inherit" onClick={toggleRightDrawer}>
@@ -254,69 +260,67 @@ export default function App() {
         </Toolbar>
       </AppBar>
 
-      {/* LEFT DRAWER - ALWAYS TEMPORARY */}
+      {/* LEFT DRAWER - TEMPORARY */}
       <Drawer
         variant="temporary"
         open={leftDrawerOpen}
         onClose={toggleLeftDrawer}
         sx={{
-          '& .MuiDrawer-paper':{
+          '& .MuiDrawer-paper': {
             width: LEFT_DRAWER_WIDTH,
-            boxSizing:'border-box',
-            backgroundColor:'#f5f5f5',
-            p:2,
-            pt:8 // push below the app bar
+            boxSizing: 'border-box',
+            backgroundColor: '#f5f5f5',
+            p: 2,
+            pt: 8 // push content below app bar
           }
         }}
       >
         <Typography variant="h6" gutterBottom color="primary">
           XRD Tools
         </Typography>
-        <Divider sx={{mb:2}} />
+        <Divider sx={{ mb: 2 }} />
 
-        <Typography variant="subtitle1" sx={{ mb:1 }}>
-          One-Click Analysis
-        </Typography>
-        <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{mb:1}}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>One-Click Analysis</Typography>
+        <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Single File
-          <input hidden type="file" accept=".xy,.txt" onChange={handleSingleFileChange} />
+          {/* NOTE: no "accept" attribute => can upload any extension */}
+          <input hidden type="file" onChange={handleSingleFileChange} />
         </Button>
         {singleFile && (
-          <Typography sx={{fontSize:12, mb:1}}>{singleFile.name}</Typography>
+          <Typography sx={{ fontSize: 12, mb: 1 }}>{singleFile.name}</Typography>
         )}
         <Button variant="contained" onClick={runAnalyze} disabled={!singleFile} fullWidth>
           Analyze
         </Button>
 
-        <Divider sx={{my:2}} />
-        <Typography variant="subtitle1" sx={{ mb:1 }}>
-          Multi-File Cluster
-        </Typography>
-        <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{mb:1}}>
+        <Divider sx={{ my: 2 }} />
+
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>Multi-File Cluster</Typography>
+        <Button variant="contained" component="label" startIcon={<UploadIcon />} sx={{ mb: 1 }}>
           Select Files
-          <input hidden type="file" multiple accept=".xy,.txt" onChange={handleMultiFileChange} />
+          {/* again, no accept => any extension */}
+          <input hidden type="file" multiple onChange={handleMultiFileChange} />
         </Button>
-        {multiFiles.length>0 && (
-          <Typography sx={{fontSize:12, mb:1}}>
-            {multiFiles.map(f=>f.name).join(', ')}
+        {multiFiles.length > 0 && (
+          <Typography sx={{ fontSize: 12, mb: 1 }}>
+            {multiFiles.map(f => f.name).join(', ')}
           </Typography>
         )}
         <Button variant="contained" onClick={runCluster} disabled={!multiFiles.length} fullWidth>
           Cluster
         </Button>
 
-        <Divider sx={{my:2}} />
-        <Typography variant="subtitle1" sx={{ mb:1 }}>
-          Simulation
-        </Typography>
+        <Divider sx={{ my: 2 }} />
+
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>Simulation</Typography>
         <TextField
           multiline
           rows={4}
           variant="outlined"
           placeholder="Enter structure..."
           value={simulationText}
-          onChange={(e)=>setSimulationText(e.target.value)}
-          sx={{width:'100%', mb:1}}
+          onChange={(e) => setSimulationText(e.target.value)}
+          sx={{ width: '100%', mb: 1 }}
         />
         <Button variant="contained" onClick={runSimulate} disabled={!simulationText.trim()} fullWidth>
           Simulate
@@ -329,16 +333,16 @@ export default function App() {
         anchor="right"
         open={rightDrawerOpen}
         sx={{
-          '& .MuiDrawer-paper':{
-            width:RIGHT_DRAWER_WIDTH,
-            boxSizing:'border-box',
-            backgroundColor:'#f5f5f5',
-            p:2,
-            pt:8
+          '& .MuiDrawer-paper': {
+            width: RIGHT_DRAWER_WIDTH,
+            boxSizing: 'border-box',
+            backgroundColor: '#f5f5f5',
+            p: 2,
+            pt: 8
           }
         }}
       >
-        <Typography variant="h6" sx={{mb:2}} color="primary">
+        <Typography variant="h6" sx={{ mb: 2 }} color="primary">
           Phases / Rietveld
         </Typography>
         {!analysisResult && (
@@ -347,26 +351,24 @@ export default function App() {
           </Typography>
         )}
         {analysisResult && (
-          <Box sx={{ overflowY:'auto' }}>
-            {/* phases */}
-            {analysisResult.phases?.length>0 && (
+          <Box sx={{ overflowY: 'auto' }}>
+            {analysisResult.phases?.length > 0 && (
               <>
                 <Typography variant="subtitle1">Phases Identified</Typography>
-                {analysisResult.phases.map((ph,i)=>(
+                {analysisResult.phases.map((ph, i) => (
                   <Typography key={i} variant="body2">
-                    {ph.phase_name}<br/>
-                    Confidence: {(ph.confidence*100).toFixed(1)}%
+                    {ph.phase_name}<br />
+                    Confidence: {(ph.confidence * 100).toFixed(1)}%
                   </Typography>
                 ))}
               </>
             )}
 
-            {/* fitted peaks */}
-            {analysisResult.fittedPeaks?.length>0 && (
+            {analysisResult.fittedPeaks?.length > 0 && (
               <>
-                <Typography variant="subtitle1" sx={{mt:2}}>Fitted Peaks</Typography>
-                <Box sx={{ maxHeight:200, overflowY:'auto' }}>
-                  <table style={{width:'100%', fontSize:'0.8rem'}}>
+                <Typography variant="subtitle1" sx={{ mt: 2 }}>Fitted Peaks</Typography>
+                <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: '0.8rem' }}>
                     <thead>
                       <tr>
                         <th>2θ</th>
@@ -375,7 +377,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {analysisResult.fittedPeaks.map((fp, idx)=>(
+                      {analysisResult.fittedPeaks.map((fp, idx) => (
                         <tr key={idx}>
                           <td>{fp.two_theta}</td>
                           <td>{fp.intensity}</td>
@@ -388,12 +390,11 @@ export default function App() {
               </>
             )}
 
-            {/* quant */}
-            {analysisResult.quantResults?.length>0 && (
+            {analysisResult.quantResults?.length > 0 && (
               <>
-                <Typography variant="subtitle1" sx={{ mt:2 }}>Quantitative Analysis</Typography>
-                <Box sx={{ maxHeight:200, overflowY:'auto' }}>
-                  <table style={{width:'100%', fontSize:'0.8rem'}}>
+                <Typography variant="subtitle1" sx={{ mt: 2 }}>Quantitative Analysis</Typography>
+                <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: '0.8rem' }}>
                     <thead>
                       <tr>
                         <th>Phase</th>
@@ -404,7 +405,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {analysisResult.quantResults.map((qr, i)=>(
+                      {analysisResult.quantResults.map((qr, i) => (
                         <tr key={i}>
                           <td>{qr.phase_name}</td>
                           <td>{qr.weight_percent}</td>
@@ -424,40 +425,41 @@ export default function App() {
 
       {/* MAIN CONTENT (center) */}
       <Box sx={{
-        flexGrow:1,
-        pt:8, // offset for app bar
-        // Use display:'flex' + flexDirection:'column' so we can scroll if needed
-        display:'flex',
-        flexDirection:'column',
-        alignItems:'center',
-        overflow:'auto'
+        flexGrow: 1,
+        pt: 8, // offset for AppBar
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        overflow: 'auto'
       }}>
-        <Container maxWidth="lg" sx={{ py:2 }}>
+        <Container maxWidth="lg" sx={{ py: 2 }}>
           {errorMessage && (
-            <Alert severity="error" sx={{ mb:2 }}>
+            <Alert severity="error" sx={{ mb: 2 }}>
               {errorMessage}
             </Alert>
           )}
 
           {isLoading && (
             <Box sx={{
-              display:'flex',
-              flexDirection:'column',
-              alignItems:'center',
-              justifyContent:'center',
-              height:'calc(100vh - 64px)'
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: 'calc(100vh - 64px)'
             }}>
               <CircularProgress />
               <Typography variant="body2" mt={1}>Processing...</Typography>
             </Box>
           )}
 
-          {/* If no data and not loading => welcome card */}
-          {!isLoading && !analysisResult && (
-            <Card variant="outlined" sx={{ maxWidth:600, mx:'auto', mt:4 }}>
+          {/* Welcome Card */}
+          {!isLoading && !analysisResult && !clusterResult && !simulationResult && (
+            <Card variant="outlined" sx={{ maxWidth: 600, mx: 'auto', mt: 4 }}>
               <CardContent>
-                <Typography variant="h5" gutterBottom>Welcome to the XRD Dashboard</Typography>
-                <Divider sx={{ my:2 }} />
+                <Typography variant="h5" gutterBottom>
+                  Welcome to the XRD Dashboard
+                </Typography>
+                <Divider sx={{ my: 2 }} />
                 <Typography variant="body1">
                   Please upload a single XRD file to analyze, or multiple files to cluster. 
                   You can also run a simulation by entering a structure in the left drawer.
@@ -466,35 +468,32 @@ export default function App() {
             </Card>
           )}
 
-          {/* If we have analysis data, show the react-grid-layout */}
+          {/* React Grid Layout for Analysis Data */}
           {!isLoading && analysisResult && (
-            <Box sx={{ width:'100%', background:'#fff', borderRadius:'4px', p:1 }}>
+            <Box sx={{ width: '100%', background: '#fff', borderRadius: '4px', p: 1 }}>
               <ResponsiveGridLayout
                 className="layout"
                 layouts={layouts}
-                breakpoints={{lg:1200, md:996, sm:768, xs:480, xxs:0}}
-                cols={{lg:12, md:12, sm:6, xs:4, xxs:2}}
+                breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+                cols={{ lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 }}
                 rowHeight={30}
-                margin={[10,10]}
+                margin={[10, 10]}
                 useCSSTransforms
                 compactType="none"
-                style={{ background:'#fff', borderRadius:'4px' }}
+                style={{ background: '#fff', borderRadius: '4px' }}
               >
-                {/* 1) Diffraction Pattern */}
-                <div key="diffPattern" style={{ background:'#fff', border:'1px solid #ddd', borderRadius:'4px', padding:'10px' }}>
-                  <Typography variant="h6" sx={{ mb:1 }}>
+                {/* Diffraction Pattern Panel */}
+                <div key="diffPattern" style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
                     Diffraction Pattern
                   </Typography>
-                  <Divider sx={{ mb:2 }} />
-                  {chartData.length>0 ? (
-                    <Box sx={{ width:'100%', height:'100%' }}>
+                  <Divider sx={{ mb: 2 }} />
+                  {chartData.length > 0 ? (
+                    <Box sx={{ width: '100%', height: '100%' }}>
                       <ResponsiveContainer>
-                        <LineChart
-                          data={chartData}
-                          margin={{ top:20, right:20, left:20, bottom:5 }}
-                        >
+                        <LineChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="two_theta" label={{ value:'2θ (deg)', position:'insideBottomRight', offset:0 }} />
+                          <XAxis dataKey="two_theta" label={{ value: '2θ (deg)', position: 'insideBottomRight', offset: 0 }} />
                           <YAxis />
                           <Tooltip />
                           <Legend />
@@ -508,19 +507,16 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2) Phase Composition */}
-                <div key="phaseComp" style={{ background:'#fff', border:'1px solid #ddd', borderRadius:'4px', padding:'10px' }}>
-                  <Typography variant="h6" sx={{ mb:1 }}>
+                {/* Phase Composition Panel */}
+                <div key="phaseComp" style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
                     Phase Composition (wt%)
                   </Typography>
-                  <Divider sx={{ mb:2 }} />
-                  {quantData.length>0 ? (
-                    <Box sx={{ width:'100%', height:'100%' }}>
+                  <Divider sx={{ mb: 2 }} />
+                  {quantData.length > 0 ? (
+                    <Box sx={{ width: '100%', height: '100%' }}>
                       <ResponsiveContainer>
-                        <BarChart
-                          data={quantData}
-                          margin={{ top:20, right:20, left:20, bottom:5 }}
-                        >
+                        <BarChart data={quantData} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="name" />
                           <YAxis />
@@ -535,12 +531,12 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3) Final Report */}
-                <div key="finalReport" style={{ background:'#fff', border:'1px solid #ddd', borderRadius:'4px', padding:'10px' }}>
-                  <Typography variant="h6" sx={{ mb:1 }}>
+                {/* Final Report Panel */}
+                <div key="finalReport" style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '4px', padding: '10px' }}>
+                  <Typography variant="h6" sx={{ mb: 1 }}>
                     Final Report
                   </Typography>
-                  <Divider sx={{ mb:2 }} />
+                  <Divider sx={{ mb: 2 }} />
                   {analysisResult.finalReport ? (
                     <ReportDisplay text={analysisResult.finalReport} />
                   ) : (
@@ -551,20 +547,20 @@ export default function App() {
             </Box>
           )}
 
-          {/* cluster results */}
+          {/* Cluster Results */}
           {clusterResult && !isLoading && (
-            <Card variant="outlined" sx={{ mt:4, maxWidth:900, mx:'auto' }}>
+            <Card variant="outlined" sx={{ mt: 4, maxWidth: 900, mx: 'auto' }}>
               <CardContent>
                 <Typography variant="h6">Cluster Results</Typography>
-                <Divider sx={{ my:2 }} />
-                {clusterResult.clusters?.map((c, idx)=>(
-                  <Typography key={idx} variant="body2" sx={{ mb:1 }}>
-                    {c.filename} ={'>'} cluster={c.cluster_label} - {c.explanation}
+                <Divider sx={{ my: 2 }} />
+                {clusterResult.clusters?.map((c, idx) => (
+                  <Typography key={idx} variant="body2" sx={{ mb: 1 }}>
+                    {c.filename} =&gt; cluster={c.cluster_label} - {c.explanation}
                   </Typography>
                 ))}
                 {clusterResult.finalReport && (
                   <>
-                    <Divider sx={{ my:2 }} />
+                    <Divider sx={{ my: 2 }} />
                     <ReportDisplay text={clusterResult.finalReport} />
                   </>
                 )}
@@ -572,19 +568,16 @@ export default function App() {
             </Card>
           )}
 
-          {/* simulation */}
+          {/* Simulation Results */}
           {simulationResult && !isLoading && (
-            <Card variant="outlined" sx={{ mt:4, maxWidth:900, mx:'auto' }}>
+            <Card variant="outlined" sx={{ mt: 4, maxWidth: 900, mx: 'auto' }}>
               <CardContent>
                 <Typography variant="h6">Simulated Pattern</Typography>
-                <Divider sx={{ my:2 }} />
-                {simulationResult.parsedData?.length>0 ? (
-                  <Box sx={{ width:'100%', height:300 }}>
+                <Divider sx={{ my: 2 }} />
+                {simulationResult.parsedData?.length > 0 ? (
+                  <Box sx={{ width: '100%', height: 300 }}>
                     <ResponsiveContainer>
-                      <LineChart
-                        data={simulationResult.parsedData}
-                        margin={{ top:20, right:20, left:20, bottom:5 }}
-                      >
+                      <LineChart data={simulationResult.parsedData} margin={{ top: 20, right: 20, left: 20, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="two_theta" />
                         <YAxis dataKey="intensity" />
@@ -599,7 +592,7 @@ export default function App() {
                 )}
                 {simulationResult.finalReport && (
                   <>
-                    <Divider sx={{ my:2 }} />
+                    <Divider sx={{ my: 2 }} />
                     <ReportDisplay text={simulationResult.finalReport} />
                   </>
                 )}
