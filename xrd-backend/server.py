@@ -239,8 +239,7 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
 
 def safe_json_loads(s):
     s = s or ""
-    # Remove any non-printable control characters
-    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
+    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)  # Remove non-printable chars
     try:
         return json.loads(cleaned)
     except Exception as e:
@@ -252,14 +251,9 @@ def safe_json_loads(s):
 ##############################################################################
 
 def wavelet_bg_subtraction(x, y, wavelet='db4', level=1, iteration=2):
-    """
-    Performs a simple wavelet-based background subtraction.
-    """
-    import pywt
     signal = y.copy()
     for _ in range(iteration):
         coeffs = pywt.wavedec(signal, wavelet, mode='smooth')
-        # reduce low-frequency approx coeffs
         coeffs[0] = coeffs[0] * 0.7  
         new_signal = pywt.waverec(coeffs, wavelet, mode='smooth')
         if len(new_signal) >= len(signal):
@@ -271,9 +265,6 @@ def wavelet_bg_subtraction(x, y, wavelet='db4', level=1, iteration=2):
     return corrected
 
 def iterative_poly_bg(x, y, max_iter=3, order=3):
-    """
-    Iterative polynomial background subtraction.
-    """
     signal = y.copy()
     for _ in range(max_iter):
         coeffs = np.polyfit(x, signal, order)
@@ -284,9 +275,6 @@ def iterative_poly_bg(x, y, max_iter=3, order=3):
     return signal
 
 def advanced_background_subtraction(data, settings):
-    """
-    Chooses background subtraction method based on settings.
-    """
     x = np.array([d["two_theta"] for d in data])
     y = np.array([d["intensity"] for d in data])
     bg_method = settings.get("bgMethod", "iterative_poly")
@@ -306,12 +294,8 @@ def advanced_background_subtraction(data, settings):
     return [{"two_theta": float(x[i]), "intensity": float(final[i])} for i in range(len(data))]
 
 def apply_smoothing(data, settings):
-    """
-    Applies smoothing (Savitzky-Golay or moving average).
-    """
     method = settings.get("smoothingMethod", "savitzky_golay")
     window = settings.get("smoothingWindow", 5)
-
     x = np.array([d["two_theta"] for d in data])
     y = np.array([d["intensity"] for d in data])
 
@@ -320,7 +304,6 @@ def apply_smoothing(data, settings):
 
     if method == "savitzky_golay":
         poly_order = settings.get("smoothingPolyOrder", 2)
-        # Ensure window is odd and <= data length
         if window % 2 == 0:
             window += 1
         if window > len(y):
@@ -333,9 +316,6 @@ def apply_smoothing(data, settings):
     return [{"two_theta": float(x[i]), "intensity": float(sm[i])} for i in range(len(data))]
 
 def strip_kalpha2(data, fraction=0.05):
-    """
-    Applies a simple scaling to mimic Kα2 stripping.
-    """
     out = []
     for d in data:
         out.append({
@@ -345,9 +325,6 @@ def strip_kalpha2(data, fraction=0.05):
     return out
 
 def apply_calibration(data, settings):
-    """
-    Adjusts 2theta values and intensities based on calibration settings.
-    """
     offset = settings.get("calibrationOffset", 0.0)
     intensityScale = settings.get("intensityScale", 1.0)
     out = []
@@ -358,16 +335,12 @@ def apply_calibration(data, settings):
         })
     return out
 
-# --- Pseudo-Voigt Fit ---
 def pseudo_voigt(x, x0, amplitude, sigma, fraction):
     lor = amplitude * (sigma ** 2) / ((x - x0) ** 2 + sigma ** 2)
     gau = amplitude * np.exp(-((x - x0) ** 2) / (2 * sigma ** 2))
     return fraction * lor + (1 - fraction) * gau
 
 def iterative_refinement(x, y, peak_guesses):
-    """
-    Multi-peak fitting using pseudo-Voigt. Returns fitted params & R-factors.
-    """
     def model_func(x, *params):
         total = np.zeros_like(x)
         for i in range(0, len(params), 4):
@@ -391,21 +364,19 @@ def iterative_refinement(x, y, peak_guesses):
 
     fitted = model_func(x, *popt)
     residual = y - fitted
-    # Weighted residual sum of squares
     w = 1.0 / (np.sqrt(y + 1e-9))
     wrss = np.sum((w * residual) ** 2)
     wrss_tot = np.sum((w * y) ** 2)
     Rwp = np.sqrt(wrss / wrss_tot)
     Rp = np.sum(np.abs(residual)) / np.sum(np.abs(y))
 
-    # Build fitted_peaks
     fitted_peaks = []
     for i in range(0, len(popt), 4):
         x0 = popt[i]
         amp = popt[i+1]
         sigma = popt[i+2]
         frac = popt[i+3]
-        fwhm = 2.0 * sigma  # naive approximate for pseudo-Voigt
+        fwhm = 2.0 * sigma
         fitted_peaks.append({
             "two_theta": float(x0),
             "intensity": float(amp),
@@ -419,10 +390,7 @@ def iterative_refinement(x, y, peak_guesses):
 ##############################################################################
 
 def run_advanced_pipeline(raw_text, settings):
-    """
-    Main pipeline for processing raw XRD data with numeric + GPT steps.
-    """
-    # ------------------ 1) GPT Parse of raw text -----------------------
+    # 1) GPT parse
     parse_prompt = "Parse lines => parse_xrd_data.\n```\n" + raw_text + "\n```"
     parse_resp = call_gpt(parse_prompt, [parse_data_schema], function_call={"name": "parse_xrd_data"})
     parsed_data = []
@@ -434,26 +402,24 @@ def run_advanced_pipeline(raw_text, settings):
     if not parsed_data:
         return {"error": "No valid data found.", "finalReport": "No data."}
 
-    # ------------------ 2) Calibration Correction -----------------------
+    # 2) Calibration
     c_data = apply_calibration(parsed_data, settings)
 
-    # ------------------ 3) Advanced Background Subtraction -------------
+    # 3) BG Subtraction
     bg_data = advanced_background_subtraction(c_data, settings)
 
-    # ------------------ 4) Smoothing -----------------------------------
+    # 4) Smoothing
     sm_data = apply_smoothing(bg_data, settings)
 
-    # ------------------ 5) Kα2 Stripping -------------------------------
+    # 5) Kα2 Stripping
     kap_data = strip_kalpha2(sm_data, settings.get("kalphaFraction", 0.05))
 
-    # ------------------ Numeric Peak Detection (instead of GPT) --------
-    # This prevents overfitting: we rely on find_peaks to detect major peaks.
+    # 6) Numeric Peak Detection (prevents overfitting)
     x_vals = np.array([d["two_theta"] for d in kap_data])
     y_vals = np.array([d["intensity"] for d in kap_data])
+    peak_indices, properties = find_peaks(y_vals, prominence=50, distance=2)  
+    # Adjust 'prominence' or 'distance' as needed
 
-    # You can tune these parameters to suit your data
-    # e.g., 'prominence=50' or 'distance=2'
-    peak_indices, properties = find_peaks(y_vals, prominence=50, distance=2)
     numeric_peaks = []
     for idx in peak_indices:
         numeric_peaks.append({
@@ -461,27 +427,18 @@ def run_advanced_pipeline(raw_text, settings):
             "intensity": float(y_vals[idx])
         })
 
-    # 6) (Optionally) you could still call GPT for peak detection,
-    #    but let's skip it or keep it purely for reference.
-    #    We can merge GPT peaks if you want, but to avoid overfitting,
-    #    we rely primarily on numeric_peaks.
-
-    # 7) Iterative Refinement with pseudo-Voigt fits around numeric_peaks
+    # 7) Iterative Refinement
     Rwp = 0
     Rp = 0
     final_fitted_peaks = []
-
-    if len(numeric_peaks) > 0 and settings.get("enableIterativeRefinement", True):
-        # Build guesses
-        # Example: amplitude=peak intensity, sigma=0.1, fraction=0.5
+    if numeric_peaks and settings.get("enableIterativeRefinement", True):
         guesses = []
         for pk in numeric_peaks:
             guesses.append((pk["two_theta"], pk["intensity"], 0.1, 0.5))
-
         fitted_peaks, Rwp, Rp, _ = iterative_refinement(x_vals, y_vals, guesses)
         final_fitted_peaks = fitted_peaks
     else:
-        # If no numeric peaks found or refinement disabled, fallback to GPT pattern_decomposition
+        # Fallback: GPT decomposition
         pattern_prompt = (
             "Given these numeric peaks, do advanced pattern decomposition => pattern_decomposition.\n"
             f"peaks={numeric_peaks}"
@@ -494,36 +451,21 @@ def run_advanced_pipeline(raw_text, settings):
                 final_fitted_peaks = args.get("fitted_peaks", [])
 
     # 8) GPT Phase Identification
-    # However, we add a safeguard: if the data closely matches the known Si pattern
-    # (dominant peak near 26.6°, etc.), we override with "Silicon".
-    # This prevents GPT from incorrectly naming multiple phases for a single-phase sample.
-    possible_silicon = False
-    # Example check: if any peak is ~26.5–26.7 with intensity > some threshold
-    for pk in final_fitted_peaks:
-        if 26.4 <= pk["two_theta"] <= 26.8 and pk["intensity"] > 500:
-            possible_silicon = True
-            break
-
+    phase_prompt = (
+        "We have final fitted peaks. Identify possible phases => phase_identification.\n"
+        f"fitted_peaks={final_fitted_peaks}"
+    )
+    phase_resp = call_gpt(phase_prompt, [phase_id_schema], function_call={"name": "phase_identification"})
     phases = []
-    if possible_silicon and len(final_fitted_peaks) < 7:
-        # Force single-phase silicon ID if it looks like the reference pattern
-        phases = [{"phase_name": "Silicon", "confidence": 0.99}]
-    else:
-        # Let GPT identify phases
-        phase_prompt = (
-            "We have final fitted peaks. Identify possible phases => phase_identification.\n"
-            f"fitted_peaks={final_fitted_peaks}"
-        )
-        phase_resp = call_gpt(phase_prompt, [phase_id_schema], function_call={"name": "phase_identification"})
-        if phase_resp:
-            fc = phase_resp["choices"][0]["message"].get("function_call")
-            if fc and fc.get("name") == "phase_identification":
-                args = safe_json_loads(fc.get("arguments"))
-                phases = args.get("phases", [])
+    if phase_resp:
+        fc = phase_resp["choices"][0]["message"].get("function_call")
+        if fc and fc.get("name") == "phase_identification":
+            args = safe_json_loads(fc.get("arguments"))
+            phases = args.get("phases", [])
 
     # 9) GPT Quantitative Analysis
     quant_results = []
-    if len(phases) > 0:
+    if phases:
         quant_prompt = (
             "Given these phases => quantitative_analysis.\n"
             f"phases={phases}"
@@ -575,7 +517,7 @@ def run_advanced_pipeline(raw_text, settings):
         "bgCorrectedData": bg_data,
         "smoothedData": sm_data,
         "strippedData": kap_data,
-        "peaks_found_numeric": numeric_peaks,   # numeric approach
+        "peaks_found_numeric": numeric_peaks,
         "fittedPeaks": final_fitted_peaks,
         "phases": phases,
         "quantResults": quant_results,
