@@ -5,8 +5,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
 
-# openai.api_key = "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"  # Set your API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+##############################################################################
+# 0) Configure OpenAI Key
+##############################################################################
+
+openai.api_key = os.getenv("OPENAI_API_KEY")  # or hard-code for local testing
 app = Flask(__name__)
 CORS(app)
 
@@ -14,7 +17,6 @@ CORS(app)
 # 1) GPT Function Schemas
 ##############################################################################
 
-# Parse XRD
 parse_data_schema = {
     "name": "parse_xrd_data",
     "description": "Parses raw XRD text data into a list of {two_theta, intensity}. (No numeric libs, GPT does it)",
@@ -37,7 +39,6 @@ parse_data_schema = {
     }
 }
 
-# Detect peaks
 peak_detection_schema = {
     "name": "detect_peaks",
     "description": "Identifies major peaks. GPT uses advanced logic (no numeric libs).",
@@ -60,7 +61,6 @@ peak_detection_schema = {
     }
 }
 
-# Pattern Decomposition (Overlapping peaks)
 pattern_decomp_schema = {
     "name": "pattern_decomposition",
     "description": "GPT does advanced peak fitting & pattern decomposition, purely text-based no HPC libs.",
@@ -84,7 +84,6 @@ pattern_decomp_schema = {
     }
 }
 
-# Phase identification
 phase_id_schema = {
     "name": "phase_identification",
     "description": "GPT decides possible phases from 2theta peaks, purely from internal knowledge. No DB libs.",
@@ -107,7 +106,6 @@ phase_id_schema = {
     }
 }
 
-# Rietveld-like quantification
 quant_schema = {
     "name": "quantitative_analysis",
     "description": "GPT simulates Rietveld refinement (no numeric HPC). Returns phase amounts, etc.",
@@ -125,7 +123,13 @@ quant_schema = {
                         "crystallite_size_nm": {"type": "number"},
                         "confidence_score": {"type": "number"}
                     },
-                    "required": ["phase_name", "weight_percent", "lattice_params", "crystallite_size_nm", "confidence_score"]
+                    "required": [
+                        "phase_name",
+                        "weight_percent",
+                        "lattice_params",
+                        "crystallite_size_nm",
+                        "confidence_score"
+                    ]
                 }
             }
         },
@@ -133,7 +137,6 @@ quant_schema = {
     }
 }
 
-# Error detection
 error_detection_schema = {
     "name": "error_detection",
     "description": "Detect anomalies purely with GPT. (No mention of Age/Income).",
@@ -153,7 +156,6 @@ error_detection_schema = {
     }
 }
 
-# Generate final text-based report
 report_schema = {
     "name": "generate_final_report",
     "description": "GPT merges all results into a final text-based summary with no numeric libs.",
@@ -166,7 +168,6 @@ report_schema = {
     }
 }
 
-# Cluster analysis (multi-file)
 cluster_schema = {
     "name": "cluster_files_gpt",
     "description": "GPT does cluster analysis across multiple patterns purely from internal knowledge. No numeric HPC.",
@@ -190,7 +191,6 @@ cluster_schema = {
     }
 }
 
-# Simulation
 simulation_schema = {
     "name": "simulate_pattern_gpt",
     "description": "GPT simulates a pattern from structure, no numeric HPC.",
@@ -218,13 +218,16 @@ simulation_schema = {
 ##############################################################################
 
 def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
+    """
+    Wrapper to call GPT with function calling.
+    """
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             functions=functions,
             function_call=function_call,
-            temperature=0.0,
+            temperature=0.0,     # Keep deterministic
             max_tokens=max_tokens
         )
         print("=== RAW GPT RESPONSE ===")
@@ -235,6 +238,9 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
         return None
 
 def safe_json_loads(s):
+    """
+    Safely parse JSON from GPT, removing control characters if needed.
+    """
     s = s or ""
     cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
     try:
@@ -248,7 +254,12 @@ def safe_json_loads(s):
 
 def run_gpt_pipeline(raw_text):
     # 1) parse
-    parse_prompt = f"Convert lines to (two_theta, intensity). Use parse_xrd_data:\n```\n{raw_text}\n```"
+    parse_prompt = (
+        "Convert lines to (two_theta, intensity). "
+        "Even if there's a header or metadata, extract numeric pairs. "
+        "Use parse_xrd_data:\n"
+        f"```\n{raw_text}\n```"
+    )
     parse_resp = call_gpt(parse_prompt, [parse_data_schema], {"name": "parse_xrd_data"})
     parsed_data = []
     if parse_resp:
@@ -258,7 +269,12 @@ def run_gpt_pipeline(raw_text):
             parsed_data = args.get("parsed_data", [])
 
     # 2) detect peaks
-    detect_prompt = f"We have {parsed_data}. Identify peaks with detect_peaks."
+    detect_prompt = (
+        "We have this parsed data. Identify major peaks. "
+        "Even if intensities jump, do your best to find notable peaks. "
+        f"parsed_data = {parsed_data}\n"
+        "=> detect_peaks"
+    )
     detect_resp = call_gpt(detect_prompt, [peak_detection_schema], {"name": "detect_peaks"})
     peaks = []
     if detect_resp:
@@ -268,7 +284,12 @@ def run_gpt_pipeline(raw_text):
             peaks = args.get("peaks", [])
 
     # 3) pattern decomposition
-    pattern_prompt = f"Given these raw peaks {peaks}, do advanced pattern decomposition => pattern_decomposition."
+    pattern_prompt = (
+        "Given these raw peaks, do advanced pattern decomposition. "
+        "Ignore potential anomalies, still attempt to fit them. "
+        f"peaks = {peaks}\n"
+        "=> pattern_decomposition"
+    )
     pattern_resp = call_gpt(pattern_prompt, [pattern_decomp_schema], {"name": "pattern_decomposition"})
     fitted_peaks = []
     if pattern_resp:
@@ -278,7 +299,23 @@ def run_gpt_pipeline(raw_text):
             fitted_peaks = args.get("fitted_peaks", [])
 
     # 4) phase identification
-    phase_prompt = f"Given fitted_peaks={fitted_peaks}, identify phases => phase_identification"
+    # We add a short "few-shot" style example to encourage GPT to produce something
+    # even if the data is imperfect.
+    example_phases = """
+"phases": [
+  { "phase_name": "Quartz", "confidence": 0.8 },
+  { "phase_name": "Feldspar", "confidence": 0.7 }
+]
+"""
+    phase_prompt = (
+        "We have fitted peaks from an XRD pattern. "
+        "Always identify 1-4 possible phases (like Quartz, Feldspar, Calcite, etc.). "
+        "Even if there's data noise, provide your best guess. Example:\n"
+        + example_phases +
+        "\nNow do the same for: "
+        f"fitted_peaks={fitted_peaks}\n"
+        "=> phase_identification"
+    )
     phase_resp = call_gpt(phase_prompt, [phase_id_schema], {"name": "phase_identification"})
     phases = []
     if phase_resp:
@@ -287,8 +324,43 @@ def run_gpt_pipeline(raw_text):
             args = safe_json_loads(fc["arguments"])
             phases = args.get("phases", [])
 
+    # If GPT returns an empty list, let's do a fallback prompt
+    if not phases:
+        fallback_phase_prompt = (
+            "You returned no phases before. Please guess 2-3 possible phases anyway, "
+            "using typical minerals. Provide non-empty 'phases'. "
+            f"fitted_peaks={fitted_peaks}\n"
+            "=> phase_identification"
+        )
+        fallback_resp = call_gpt(fallback_phase_prompt, [phase_id_schema], {"name": "phase_identification"})
+        if fallback_resp:
+            fc2 = fallback_resp["choices"][0]["message"].get("function_call")
+            if fc2 and fc2["name"] == "phase_identification":
+                args2 = safe_json_loads(fc2["arguments"])
+                maybe_phases = args2.get("phases", [])
+                if maybe_phases:
+                    phases = maybe_phases
+
     # 5) quant
-    quant_prompt = f"Phases: {phases}. Do Rietveld-like quant => quantitative_analysis"
+    # Similarly, we nudge GPT to produce a Rietveld-like quant analysis
+    example_quant = """
+"quant_results": [
+  {
+    "phase_name": "Quartz",
+    "weight_percent": 30,
+    "lattice_params": "a=4.9134 Å, c=5.4051 Å",
+    "crystallite_size_nm": 50,
+    "confidence_score": 0.8
+  }
+]
+"""
+    quant_prompt = (
+        "Given these identified phases, do a Rietveld-like quant. "
+        "Always provide at least one phase with weight_percent, lattice_params, crystallite_size_nm, confidence_score. "
+        f"Example:\n{example_quant}\n"
+        f"phases = {phases}\n"
+        "=> quantitative_analysis"
+    )
     quant_resp = call_gpt(quant_prompt, [quant_schema], {"name": "quantitative_analysis"})
     quant_results = []
     if quant_resp:
@@ -298,7 +370,13 @@ def run_gpt_pipeline(raw_text):
             quant_results = args.get("quant_results", [])
 
     # 6) error detection
-    error_prompt = f"Check anomalies in numeric data => error_detection. Data: {parsed_data}"
+    # We can tone down negativity about "jumps" or "anomalies" by softening the prompt:
+    error_prompt = (
+        "Check anomalies in numeric data if any. "
+        "But do not refuse to proceed if intensities jump. Just note them. "
+        f"parsed_data={parsed_data}\n"
+        "=> error_detection"
+    )
     error_resp = call_gpt(error_prompt, [error_detection_schema], {"name": "error_detection"})
     issues_found = []
     suggested_actions = []
@@ -310,12 +388,12 @@ def run_gpt_pipeline(raw_text):
             suggested_actions = args.get("suggested_actions", [])
 
     # 7) final report
-    final_prompt = f"""
-    Summarize all. 
-    parsed_data={parsed_data}, peaks={peaks}, fitted_peaks={fitted_peaks}, 
-    phases={phases}, quant={quant_results}, issues={issues_found}, suggestions={suggested_actions}.
-    => generate_final_report
-    """
+    final_prompt = (
+        "Create a final text-based summary of all results. Even if data had anomalies, provide a helpful conclusion.\n"
+        f"parsed_data={parsed_data}, peaks={peaks}, fitted_peaks={fitted_peaks}, "
+        f"phases={phases}, quant={quant_results}, issues={issues_found}, suggestions={suggested_actions}.\n"
+        "=> generate_final_report"
+    )
     report_resp = call_gpt(final_prompt, [report_schema], {"name": "generate_final_report"})
     final_report = ""
     if report_resp:
@@ -356,15 +434,18 @@ def analyze_xrd():
 def simulate_pattern():
     """
     GPT-based pattern simulation, no numeric libs. 
-    Accepts JSON { 'structure': ... } 
-    => returns a simulated parse_xrd_data.
+    Accepts JSON { 'structure': ... } => returns a simulated parse_xrd_data.
     """
     data = request.get_json()
     if not data or 'structure' not in data:
         return jsonify({'error': 'No structure provided'}), 400
 
     struct_info = data['structure']
-    prompt = f"Simulate an XRD pattern from structure: {struct_info} => simulate_pattern_gpt"
+    prompt = (
+        "Simulate an XRD pattern from this structure. "
+        "Return a parse_xrd_data function call with 2theta and intensity. "
+        f"=> simulate_pattern_gpt\nStructure info:\n{struct_info}"
+    )
     sim_resp = call_gpt(prompt, [simulation_schema], {"name": "simulate_pattern_gpt"})
     parsed_data = []
     if sim_resp:
@@ -373,17 +454,14 @@ def simulate_pattern():
             args = safe_json_loads(fc["arguments"])
             parsed_data = args.get("parsed_data", [])
 
-    final_report = f"Synthetic pattern from GPT, purely AI. Found {len(parsed_data)} points."
-    return jsonify({
-        "parsedData": parsed_data,
-        "finalReport": final_report
-    }), 200
+    final_report = f"Synthetic pattern from GPT. Found {len(parsed_data)} points."
+    return jsonify({"parsedData": parsed_data, "finalReport": final_report}), 200
 
 @app.route('/api/cluster', methods=['POST'])
 def cluster_analysis():
     """
-    GPT-based cluster of multiple .xy or any extension. 
-    We'll parse each file with GPT parse_xrd_data, store the results, then feed them back to GPT for cluster.
+    GPT-based cluster of multiple .xy or any extension.
+    We'll parse each file with parse_xrd_data, then feed them back to GPT => cluster_files_gpt
     """
     cluster_files = request.files.getlist('clusterFiles')
     if not cluster_files:
@@ -406,10 +484,10 @@ def cluster_analysis():
             "parsed_data": parsed_data
         })
 
-    cluster_prompt = f"""
-    We have multiple patterns (filename + data). Cluster them => cluster_files_gpt
-    Patterns: {pattern_summaries}
-    """
+    cluster_prompt = (
+        "We have multiple patterns (filename + data). Group them into clusters => cluster_files_gpt.\n"
+        f"Patterns: {pattern_summaries}"
+    )
     cluster_resp = call_gpt(cluster_prompt, [cluster_schema], {"name": "cluster_files_gpt"})
     clusters = []
     if cluster_resp:
@@ -419,10 +497,7 @@ def cluster_analysis():
             clusters = args.get("clusters", [])
 
     final_report = f"GPT-based cluster for {len(cluster_files)} files. Pure AI approach."
-    return jsonify({
-        "clusters": clusters,
-        "finalReport": final_report
-    }), 200
+    return jsonify({"clusters": clusters, "finalReport": final_report}), 200
 
 @app.route('/api/instrument-upload', methods=['POST'])
 def instrument_upload():
@@ -435,13 +510,11 @@ def instrument_upload():
 
     text = f.read().decode('utf-8', errors='ignore')
     result = run_gpt_pipeline(text)
-    # Could notify user
     return jsonify(result), 200
 
 ##############################################################################
-# 5) Run (Local)
+# 5) Run
 ##############################################################################
 
 if __name__ == '__main__':
-    # Feel free to change port=8080 or 5000, etc.
     app.run(host='0.0.0.0', port=8080, debug=True)
