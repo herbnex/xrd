@@ -50,7 +50,6 @@ function ReportDisplay({ text }) {
 /** Combine multiple numeric steps + fitted data into multi-line chart. */
 function unifyDataForMultiLine(analysisResult) {
   // We'll store multiple lines: raw, calibrated, bg, smoothed, stripped, fitted
-  // We'll store them under keys: Raw, Calib, BG, Smooth, Kalpha, Fitted
   if (!analysisResult) return [];
 
   const map = new Map();
@@ -70,7 +69,6 @@ function unifyDataForMultiLine(analysisResult) {
   const bg = analysisResult.bgCorrectedData || [];
   const sm = analysisResult.smoothedData || [];
   const ka = analysisResult.strippedData || [];
-  // fittedPeaks is a bit different
   const fp = analysisResult.fittedPeaks || [];
 
   addSeries(pd, 'Raw');
@@ -89,7 +87,6 @@ function unifyDataForMultiLine(analysisResult) {
   return Array.from(map.values()).sort((a,b)=>a.two_theta - b.two_theta);
 }
 
-// Layout styling
 const LEFT_DRAWER_WIDTH = 280;
 const RIGHT_DRAWER_WIDTH = 320;
 
@@ -129,18 +126,18 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState('');
 
   // --------------- Numeric Settings ---------------
-  const [bgMethod, setBgMethod] = useState('iterative_poly');  // wavelet or iterative_poly
-  const [smoothingMethod, setSmoothingMethod] = useState('savitzky_golay');
-  const [polyOrder, setPolyOrder] = useState(3);     // for iterative poly BG
-  const [waveletName, setWaveletName] = useState('db4');
-  const [enableIterRefine, setEnableIterRefine] = useState(false);
-  const [calibrationOffset, setCalibrationOffset] = useState(0.0);
-  const [kalphaFraction, setKalphaFraction] = useState(0.05);
+  // If left blank or minimal, GPT will fill them in via recommend_numeric_params
+  const [bgMethod, setBgMethod] = useState('');
+  const [waveletName, setWaveletName] = useState('');
+  const [polyOrder, setPolyOrder] = useState('');
+  const [smoothingMethod, setSmoothingMethod] = useState('');
+  const [kalphaFraction, setKalphaFraction] = useState('');
+  const [calibrationOffset, setCalibrationOffset] = useState('');
+  const [enableIterRefine, setEnableIterRefine] = useState(true);
 
   // For multi-line chart
   const chartData = unifyDataForMultiLine(analysisResult);
 
-  // Layout for react-grid-layout
   const layouts = {
     lg: [
       { i: 'diffPattern', x: 0, y: 0, w: 8, h: 12 },
@@ -156,7 +153,7 @@ export default function App() {
     ]
   };
 
-  // Dev or prod
+  // For local dev, you might use 'http://localhost:8080', etc.
   const API_BASE = 'https://xrd-backend-enuq.onrender.com';
 
   const toggleLeftDrawer = () => setLeftDrawerOpen(!leftDrawerOpen);
@@ -182,17 +179,16 @@ export default function App() {
       const formData = new FormData();
       formData.append('xrdFile', singleFile);
 
-      // pass settings as a JSON string
-      const numericSettings = {
-        bgMethod,
-        wavelet: waveletName,
-        polyOrder,
-        smoothingMethod,
-        kalphaFraction,
-        enableIterativeRefinement: enableIterRefine,
-        calibrationOffset: parseFloat(calibrationOffset) || 0.0,
-        // etc...
-      };
+      // pass settings as a JSON string. GPT will fill missing values.
+      const numericSettings = {};
+      if(bgMethod) numericSettings.bgMethod = bgMethod;
+      if(waveletName) numericSettings.wavelet = waveletName;
+      if(polyOrder) numericSettings.polyOrder = parseInt(polyOrder);
+      if(smoothingMethod) numericSettings.smoothingMethod = smoothingMethod;
+      if(kalphaFraction) numericSettings.kalphaFraction = parseFloat(kalphaFraction);
+      if(calibrationOffset) numericSettings.calibrationOffset = parseFloat(calibrationOffset);
+      numericSettings.enableIterativeRefinement = enableIterRefine;
+
       formData.append('settings', JSON.stringify(numericSettings));
 
       const resp = await fetch(`${API_BASE}/api/analyze`, {
@@ -277,6 +273,7 @@ export default function App() {
   /******************************************************
    * Render
    ******************************************************/
+  const chartDataExists = chartData.length>0;
   return (
     <RootBox>
       <AppBar position="fixed" sx={{ zIndex: theme=> theme.zIndex.drawer +1 }}>
@@ -293,7 +290,7 @@ export default function App() {
         </Toolbar>
       </AppBar>
 
-      {/* LEFT DRAWER: Tools + Numeric Settings */}
+      {/* LEFT DRAWER */}
       <Drawer
         variant="temporary"
         open={leftDrawerOpen}
@@ -320,11 +317,9 @@ export default function App() {
           <input hidden type="file" accept=".xy,.txt" onChange={handleSingleFileChange}/>
         </Button>
         {singleFile && <Typography variant="body2">{singleFile.name}</Typography>}
-        <Button variant="contained" onClick={runAnalyze} disabled={!singleFile || isLoading} fullWidth>
+        <Button variant="contained" onClick={runAnalyze} disabled={!singleFile || isLoading} fullWidth sx={{ mb:2 }}>
           Analyze
         </Button>
-
-        <Divider sx={{ my:2 }}/>
 
         {/* Multi-file cluster */}
         <Typography variant="subtitle1" sx={{ mb:1 }}>Multi-file Cluster</Typography>
@@ -360,91 +355,87 @@ export default function App() {
 
         <Divider sx={{ my:2 }}/>
 
-        {/* Numeric Settings */}
+        {/* Numeric Settings: GPT will fill missing fields */}
         <Typography variant="h6" color="primary" sx={{ mb:1 }}>
           Numeric Settings
         </Typography>
-        <Typography variant="subtitle2">Background Subtraction</Typography>
-        <FormControl fullWidth sx={{ mb:1 }}>
-          <InputLabel>Method</InputLabel>
+
+        <Typography variant="caption">If left blank, GPT decides.</Typography>
+        <Divider sx={{ mb:1 }}/>
+        <Typography variant="subtitle2">Background Method:</Typography>
+        <FormControl fullWidth size="small" sx={{ mb:1 }}>
+          <InputLabel>bgMethod</InputLabel>
           <Select
             value={bgMethod}
-            label="Method"
+            label="bgMethod"
             onChange={e=>setBgMethod(e.target.value)}
           >
+            <MenuItem value="">Auto (GPT)</MenuItem>
             <MenuItem value="iterative_poly">Iterative Polynomial</MenuItem>
             <MenuItem value="wavelet">Wavelet</MenuItem>
           </Select>
         </FormControl>
-        {bgMethod==="wavelet" && (
-          <TextField
-            label="Wavelet Name"
-            variant="outlined"
-            size="small"
-            value={waveletName}
-            onChange={e=>setWaveletName(e.target.value)}
-            sx={{ mb:1 }}
-          />
-        )}
-        {bgMethod==="iterative_poly" && (
-          <TextField
-            label="Poly Order"
-            type="number"
-            variant="outlined"
-            size="small"
-            value={polyOrder}
-            onChange={e=>setPolyOrder(parseInt(e.target.value)||3)}
-            sx={{ mb:1 }}
-          />
-        )}
 
-        <Typography variant="subtitle2">Smoothing</Typography>
-        <FormControl fullWidth sx={{ mb:1 }}>
-          <InputLabel>Method</InputLabel>
+        <TextField
+          label="Wavelet"
+          size="small"
+          variant="outlined"
+          value={waveletName}
+          onChange={e=>setWaveletName(e.target.value)}
+          sx={{ mb:1 }}
+        />
+
+        <TextField
+          label="Poly Order"
+          size="small"
+          type="number"
+          variant="outlined"
+          value={polyOrder}
+          onChange={e=>setPolyOrder(e.target.value)}
+          sx={{ mb:1 }}
+        />
+
+        <Typography variant="subtitle2">Smoothing Method:</Typography>
+        <FormControl fullWidth size="small" sx={{ mb:1 }}>
+          <InputLabel>smoothingMethod</InputLabel>
           <Select
             value={smoothingMethod}
-            label="Method"
+            label="smoothingMethod"
             onChange={e=>setSmoothingMethod(e.target.value)}
           >
-            <MenuItem value="savitzky_golay">Savitzky–Golay</MenuItem>
+            <MenuItem value="">Auto (GPT)</MenuItem>
+            <MenuItem value="savitzky_golay">Savitzky-Golay</MenuItem>
             <MenuItem value="average">Moving Average</MenuItem>
           </Select>
         </FormControl>
 
-        <Divider sx={{ my:1 }}/>
-
-        <Typography variant="subtitle2">Kα2 Fraction</Typography>
         <TextField
           label="Kα2 fraction"
           type="number"
-          value={kalphaFraction}
-          onChange={e=>setKalphaFraction(parseFloat(e.target.value)||0.05)}
           size="small"
+          variant="outlined"
+          value={kalphaFraction}
+          onChange={e=>setKalphaFraction(e.target.value)}
           sx={{ mb:1 }}
         />
 
-        <Typography variant="subtitle2">Calibration Offset (deg)</Typography>
         <TextField
-          label="Calibration Offset"
+          label="Calibration Offset (deg)"
           type="number"
           size="small"
+          variant="outlined"
           value={calibrationOffset}
           onChange={e=>setCalibrationOffset(e.target.value)}
           sx={{ mb:1 }}
         />
 
         <FormControlLabel
-          control={
-            <Switch
-              checked={enableIterRefine}
-              onChange={e=>setEnableIterRefine(e.target.checked)}
-            />
-          }
+          control={<Switch checked={enableIterRefine} onChange={e=>setEnableIterRefine(e.target.checked)}/>}
           label="Enable Iterative Refinement"
         />
       </Drawer>
 
-      {/* RIGHT DRAWER - DETAILED RESULTS */}
+      {/* RIGHT DRAWER */}
       <Drawer
         variant="persistent"
         anchor="right"
@@ -469,13 +460,11 @@ export default function App() {
         )}
         {analysisResult && (
           <Box sx={{ overflowY:'auto', maxHeight:'80vh' }}>
-            {/* Show advanced numeric stats */}
             <Typography variant="subtitle1">R-Factors</Typography>
             <Typography variant="body2">Rwp: {analysisResult.Rwp?.toFixed(4)}</Typography>
             <Typography variant="body2" sx={{ mb:2 }}>Rp: {analysisResult.Rp?.toFixed(4)}</Typography>
             <Divider sx={{ mb:2 }}/>
 
-            {/* Fitted peaks, phases, quant, etc. as you had before */}
             {analysisResult.fittedPeaks?.length > 0 && (
               <>
                 <Typography variant="subtitle2" sx={{ mt:1 }}>Fitted Peaks</Typography>
@@ -534,6 +523,18 @@ export default function App() {
                 </Box>
               </>
             )}
+
+            {/* Show recommended vs final settings for debugging */}
+            <Divider sx={{ my:2 }}/>
+            <Typography variant="subtitle2">Recommended Settings (GPT)</Typography>
+            <pre style={{ fontSize:'0.7rem' }}>
+              {JSON.stringify(analysisResult.recommendedSettings, null, 2)}
+            </pre>
+            <Divider sx={{ my:2 }}/>
+            <Typography variant="subtitle2">Final Settings (Merged)</Typography>
+            <pre style={{ fontSize:'0.7rem' }}>
+              {JSON.stringify(analysisResult.finalSettings, null, 2)}
+            </pre>
           </Box>
         )}
       </Drawer>
@@ -559,7 +560,7 @@ export default function App() {
             </Box>
           )}
 
-          {/* If no data */}
+          {/* If no data yet */}
           {!isLoading && !analysisResult && !clusterResult && !simulationResult && (
             <Card variant="outlined" sx={{ maxWidth:600, mx:'auto', mt:4 }}>
               <CardContent>
@@ -568,10 +569,9 @@ export default function App() {
                 </Typography>
                 <Divider sx={{ my:2 }}/>
                 <Typography variant="body1">
-                  This version includes advanced numeric steps (wavelet or iterative polynomial 
-                  background subtraction, Savitzky–Golay smoothing, iterative refinement with 
-                  pseudo-Voigt, Rwp, Rp, and GPT-based final interpretation. 
-                  Adjust numeric settings on the left, see final results on the right.
+                  Now includes GPT-based numeric settings recommendations!  
+                  If you leave background/smoothing settings blank, GPT will choose them
+                  based on data length, intensity ranges, etc.
                 </Typography>
               </CardContent>
             </Card>
@@ -630,7 +630,7 @@ export default function App() {
             </Card>
           )}
 
-          {/* Main Analysis with advanced numeric + GPT */}
+          {/* Main Analysis */}
           {!isLoading && analysisResult && (
             <Box sx={{ width:'100%', background:'#fff', borderRadius:2, p:1, mt:2 }}>
               <ResponsiveGridLayout
@@ -640,24 +640,22 @@ export default function App() {
                 cols={{ lg:12, md:12, sm:6, xs:4, xxs:2 }}
                 rowHeight={30}
                 margin={[10,10]}
-                // disable resizing/drag
                 isResizable={false}
                 isDraggable={false}
                 compactType="vertical"
                 style={{ background:'#fff', borderRadius:'4px' }}
               >
-                {/* Multi-line chart */}
                 <div key="diffPattern" style={{ background:'#fff', border:'1px solid #ddd', borderRadius:4, padding:10 }}>
                   <Typography variant="subtitle1" sx={{ mb:1 }}>
                     Multi-Step Diffraction Pattern
                   </Typography>
                   <Divider sx={{ mb:2 }}/>
-                  {chartData.length>0 ? (
+                  {chartDataExists ? (
                     <Box sx={{ width:'100%', height:300 }}>
                       <ResponsiveContainer>
                         <LineChart data={chartData}>
                           <CartesianGrid strokeDasharray="3 3"/>
-                          <XAxis dataKey="two_theta" label={{ value:'2θ (deg)', position:'insideBottomRight', offset:0 }}/>
+                          <XAxis dataKey="two_theta" label={{ value:'2θ (deg)', position:'insideBottomRight' }}/>
                           <YAxis/>
                           <Tooltip/>
                           <Legend/>
@@ -675,7 +673,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Final Report */}
                 <div key="finalReport" style={{ background:'#fff', border:'1px solid #ddd', borderRadius:4, padding:10 }}>
                   <Typography variant="subtitle1" sx={{ mb:1 }}>Final Report</Typography>
                   <Divider sx={{ mb:2 }}/>

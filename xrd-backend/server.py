@@ -44,6 +44,38 @@ parse_data_schema = {
     }
 }
 
+recommend_params_schema = {
+    "name": "recommend_numeric_params",
+    "description": "GPT suggests numeric processing parameters (bgMethod, polyOrder, wavelet, smoothingMethod, etc.) based on the data range, intensities, etc.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "recommended_settings": {
+                "type": "object",
+                "properties": {
+                    "bgMethod": {"type": "string"},
+                    "polyOrder": {"type": "number"},
+                    "wavelet": {"type": "string"},
+                    "smoothingMethod": {"type": "string"},
+                    "smoothingWindow": {"type": "number"},
+                    "kalphaFraction": {"type": "number"},
+                    "enableIterativeRefinement": {"type": "boolean"}
+                },
+                "required": [
+                    "bgMethod",
+                    "polyOrder",
+                    "wavelet",
+                    "smoothingMethod",
+                    "smoothingWindow",
+                    "kalphaFraction",
+                    "enableIterativeRefinement"
+                ]
+            }
+        },
+        "required": ["recommended_settings"]
+    }
+}
+
 peak_detection_schema = {
     "name": "detect_peaks",
     "description": "Identifies major peaks. GPT uses advanced logic (no numeric libs).",
@@ -239,7 +271,7 @@ def call_gpt(prompt, functions=None, function_call="auto", max_tokens=2000):
 
 def safe_json_loads(s):
     s = s or ""
-    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)  # Remove non-printable chars
+    cleaned = re.sub(r'[\x00-\x1F\x7F]', '', s)
     try:
         return json.loads(cleaned)
     except Exception as e:
@@ -275,20 +307,22 @@ def iterative_poly_bg(x, y, max_iter=3, order=3):
     return signal
 
 def advanced_background_subtraction(data, settings):
+    """
+    Chooses background subtraction method based on final 'settings' (merged user & GPT).
+    """
     x = np.array([d["two_theta"] for d in data])
     y = np.array([d["intensity"] for d in data])
-    bg_method = settings.get("bgMethod", "iterative_poly")
 
+    bg_method = settings.get("bgMethod", "iterative_poly")
     if bg_method == "wavelet":
         wavelet = settings.get("wavelet", "db4")
-        waveletLevel = settings.get("waveletLevel", 1)
-        iteration = settings.get("iteration", 2)
-        removed = wavelet_bg_subtraction(x, y, wavelet, waveletLevel, iteration)
+        iteration = settings.get("waveletIterations", 2)
+        removed = wavelet_bg_subtraction(x, y, wavelet, 1, iteration)
         final = y - removed
     else:
-        order = settings.get("polyOrder", 3)
+        poly_order = settings.get("polyOrder", 3)
         max_iter = settings.get("maxIter", 3)
-        final = iterative_poly_bg(x, y, max_iter, order)
+        final = iterative_poly_bg(x, y, max_iter, poly_order)
 
     final = np.clip(final, 0, None)
     return [{"two_theta": float(x[i]), "intensity": float(final[i])} for i in range(len(data))]
@@ -296,6 +330,7 @@ def advanced_background_subtraction(data, settings):
 def apply_smoothing(data, settings):
     method = settings.get("smoothingMethod", "savitzky_golay")
     window = settings.get("smoothingWindow", 5)
+
     x = np.array([d["two_theta"] for d in data])
     y = np.array([d["intensity"] for d in data])
 
@@ -389,9 +424,19 @@ def iterative_refinement(x, y, peak_guesses):
 # 4) Master Pipeline: Advanced Numeric + GPT Integration
 ##############################################################################
 
-def run_advanced_pipeline(raw_text, settings):
-    # 1) GPT parse
-    parse_prompt = "Parse lines => parse_xrd_data.\n```\n" + raw_text + "\n```"
+def run_advanced_pipeline(raw_text, user_settings):
+    """
+    Main pipeline. We do:
+      1) GPT parse
+      2) GPT "recommend_numeric_params" to fill in missing user settings
+      3) Apply calibration, background, smoothing, etc.
+      4) Numeric peak detection & iterative refinement
+      5) GPT phase ID, quant, error detection, final report
+    """
+    # ------------------1) GPT parse------------------
+    parse_prompt = (
+        "Parse lines => parse_xrd_data.\n```\n" + raw_text + "\n```"
+    )
     parse_resp = call_gpt(parse_prompt, [parse_data_schema], function_call={"name": "parse_xrd_data"})
     parsed_data = []
     if parse_resp:
@@ -402,43 +447,81 @@ def run_advanced_pipeline(raw_text, settings):
     if not parsed_data:
         return {"error": "No valid data found.", "finalReport": "No data."}
 
-    # 2) Calibration
-    c_data = apply_calibration(parsed_data, settings)
+    # ------------------2) GPT recommend numeric params (if user hasn't set them)-----
+    # We'll feed GPT some basic stats about data range, length, intensities
+    # Then GPT returns recommended_settings
+    # We'll merge user_settings with recommended ones (user overrides GPT).
+    xvals = [d["two_theta"] for d in parsed_data]
+    yvals = [d["intensity"] for d in parsed_data]
+    if len(xvals)>0:
+        data_min = min(xvals)
+        data_max = max(xvals)
+        intensity_min = min(yvals)
+        intensity_max = max(yvals)
+    else:
+        data_min = 0
+        data_max = 0
+        intensity_min = 0
+        intensity_max = 0
 
-    # 3) BG Subtraction
-    bg_data = advanced_background_subtraction(c_data, settings)
+    rec_prompt = (
+        f"Data range: {data_min:.2f} to {data_max:.2f} (deg), length={len(xvals)}.\n"
+        f"Intensity range: {intensity_min:.2f} to {intensity_max:.2f}.\n"
+        "Recommend numeric XRD processing parameters => recommend_numeric_params.\n"
+        "Output must have: bgMethod, polyOrder, wavelet, smoothingMethod, smoothingWindow, kalphaFraction, enableIterativeRefinement.\n"
+    )
+    rec_resp = call_gpt(rec_prompt, [recommend_params_schema], function_call={"name":"recommend_numeric_params"})
+    recommended_settings = {}
+    if rec_resp:
+        fc = rec_resp["choices"][0]["message"].get("function_call")
+        if fc and fc.get("name") == "recommend_numeric_params":
+            args = safe_json_loads(fc.get("arguments"))
+            recommended_settings = args.get("recommended_settings", {})
 
-    # 4) Smoothing
-    sm_data = apply_smoothing(bg_data, settings)
+    # merge user + GPT recommended
+    # user overrides GPT if conflict
+    final_settings = dict(recommended_settings)
+    for k,v in user_settings.items():
+        final_settings[k] = v
 
-    # 5) Kα2 Stripping
-    kap_data = strip_kalpha2(sm_data, settings.get("kalphaFraction", 0.05))
+    # For clarity, ensure some defaults
+    final_settings.setdefault("bgMethod", "iterative_poly")
+    final_settings.setdefault("polyOrder", 3)
+    final_settings.setdefault("wavelet", "db4")
+    final_settings.setdefault("smoothingMethod", "savitzky_golay")
+    final_settings.setdefault("smoothingWindow", 5)
+    final_settings.setdefault("kalphaFraction", 0.05)
+    final_settings.setdefault("enableIterativeRefinement", True)
+    final_settings.setdefault("calibrationOffset", 0.0)
+    final_settings.setdefault("intensityScale", 1.0)
 
-    # 6) Numeric Peak Detection (prevents overfitting)
+    # ------------------3) Calibration + BG + Smoothing + Kalpha-----------
+    c_data = apply_calibration(parsed_data, final_settings)
+    bg_data = advanced_background_subtraction(c_data, final_settings)
+    sm_data = apply_smoothing(bg_data, final_settings)
+    kap_data = strip_kalpha2(sm_data, final_settings["kalphaFraction"])
+
+    # ------------------4) Numeric Peak Detection & Refinement-------------
     x_vals = np.array([d["two_theta"] for d in kap_data])
     y_vals = np.array([d["intensity"] for d in kap_data])
-    peak_indices, properties = find_peaks(y_vals, prominence=50, distance=2)  
-    # Adjust 'prominence' or 'distance' as needed
 
+    # Adjust these detection parameters if you like
+    peak_indices, properties = find_peaks(y_vals, prominence=50, distance=2)
     numeric_peaks = []
     for idx in peak_indices:
-        numeric_peaks.append({
-            "two_theta": float(x_vals[idx]),
-            "intensity": float(y_vals[idx])
-        })
+        numeric_peaks.append({"two_theta": float(x_vals[idx]), "intensity": float(y_vals[idx])})
 
-    # 7) Iterative Refinement
-    Rwp = 0
-    Rp = 0
+    Rwp, Rp = 0.0, 0.0
     final_fitted_peaks = []
-    if numeric_peaks and settings.get("enableIterativeRefinement", True):
+    if numeric_peaks and final_settings.get("enableIterativeRefinement", True):
         guesses = []
         for pk in numeric_peaks:
+            # initial guess for each peak
             guesses.append((pk["two_theta"], pk["intensity"], 0.1, 0.5))
         fitted_peaks, Rwp, Rp, _ = iterative_refinement(x_vals, y_vals, guesses)
         final_fitted_peaks = fitted_peaks
     else:
-        # Fallback: GPT decomposition
+        # fallback GPT pattern decomposition
         pattern_prompt = (
             "Given these numeric peaks, do advanced pattern decomposition => pattern_decomposition.\n"
             f"peaks={numeric_peaks}"
@@ -450,7 +533,8 @@ def run_advanced_pipeline(raw_text, settings):
                 args = safe_json_loads(fc.get("arguments"))
                 final_fitted_peaks = args.get("fitted_peaks", [])
 
-    # 8) GPT Phase Identification
+    # ------------------5) GPT Phase ID, Quant, Error Detection, Final Report-----
+    # Phase ID
     phase_prompt = (
         "We have final fitted peaks. Identify possible phases => phase_identification.\n"
         f"fitted_peaks={final_fitted_peaks}"
@@ -463,7 +547,7 @@ def run_advanced_pipeline(raw_text, settings):
             args = safe_json_loads(fc.get("arguments"))
             phases = args.get("phases", [])
 
-    # 9) GPT Quantitative Analysis
+    # Quant
     quant_results = []
     if phases:
         quant_prompt = (
@@ -477,7 +561,7 @@ def run_advanced_pipeline(raw_text, settings):
                 args = safe_json_loads(fc.get("arguments"))
                 quant_results = args.get("quant_results", [])
 
-    # 10) GPT Error Detection
+    # Error detection
     error_prompt = (
         "Check anomalies => error_detection. parsed_data below.\n"
         f"parsed_data={parsed_data}"
@@ -492,7 +576,7 @@ def run_advanced_pipeline(raw_text, settings):
             issues_found = args.get("issues_found", [])
             suggested_actions = args.get("suggested_actions", [])
 
-    # 11) GPT Final Report
+    # Final report
     final_prompt = (
         "Create final text-based summary => generate_final_report.\n"
         f"parsed_data_count={len(parsed_data)}, "
@@ -501,7 +585,8 @@ def run_advanced_pipeline(raw_text, settings):
         f"phases={phases}, "
         f"quant={quant_results}, "
         f"issues={issues_found}, "
-        f"suggestions={suggested_actions}"
+        f"suggestions={suggested_actions}, "
+        f"userSettings={user_settings}, recommendedSettings={recommended_settings}"
     )
     rep_resp = call_gpt(final_prompt, [report_schema], function_call={"name": "generate_final_report"})
     final_report = ""
@@ -525,7 +610,10 @@ def run_advanced_pipeline(raw_text, settings):
         "suggestedActions": suggested_actions,
         "Rwp": Rwp,
         "Rp": Rp,
-        "finalReport": final_report
+        "finalReport": final_report,
+        # helpful to see what GPT recommended
+        "recommendedSettings": recommended_settings,
+        "finalSettings": final_settings
     }
 
 ##############################################################################
@@ -543,20 +631,16 @@ def analyze_xrd():
         return jsonify({'error': 'No file uploaded'}), 400
 
     try:
-        settings = json.loads(request.form.get('settings', '{}'))
+        user_settings = json.loads(request.form.get('settings', '{}'))
     except Exception as e:
         return jsonify({'error': f'Error parsing settings: {e}'}), 400
 
     raw_text = f.read().decode('utf-8', errors='ignore')
-    result = run_advanced_pipeline(raw_text, settings)
+    result = run_advanced_pipeline(raw_text, user_settings)
     return jsonify(result), 200
 
 @app.route('/api/simulate', methods=['POST'])
 def simulate_pattern():
-    """
-    Endpoint to simulate an XRD pattern from a provided structure.
-    Expects JSON body with a 'structure' key.
-    """
     data = request.get_json()
     if not data or 'structure' not in data:
         return jsonify({'error': 'No structure provided'}), 400
@@ -578,51 +662,46 @@ def simulate_pattern():
 
 @app.route('/api/cluster', methods=['POST'])
 def cluster_analysis():
-    """
-    Endpoint for cluster analysis across multiple XRD files.
-    """
     cluster_files = request.files.getlist('clusterFiles')
     if not cluster_files:
         return jsonify({'error': 'No files for cluster analysis'}), 400
 
-    pattern_summaries = []
+    pattern_summaries=[]
     for f in cluster_files:
         txt = f.read().decode('utf-8', errors='ignore')
         parse_prompt = f"Parse => parse_xrd_data:\n```\n{txt}\n```"
-        parse_resp = call_gpt(parse_prompt, [parse_data_schema], function_call={"name": "parse_xrd_data"})
-        pd_data = []
+        parse_resp = call_gpt(parse_prompt, [parse_data_schema], function_call={"name":"parse_xrd_data"})
+        pd_data=[]
         if parse_resp:
             fc = parse_resp["choices"][0]["message"].get("function_call")
-            if fc and fc.get("name") == "parse_xrd_data":
+            if fc and fc.get("name")=="parse_xrd_data":
                 args = safe_json_loads(fc.get("arguments"))
-                pd_data = args.get("parsed_data", [])
-        pattern_summaries.append({"filename": f.filename, "parsed_data": pd_data})
+                pd_data = args.get("parsed_data",[])
+        pattern_summaries.append({"filename":f.filename,"parsed_data":pd_data})
 
     cluster_prompt = (
         "We have multiple patterns => cluster_files_gpt.\n"
         f"Patterns: {pattern_summaries}"
     )
-    cresp = call_gpt(cluster_prompt, [cluster_schema], function_call={"name": "cluster_files_gpt"})
-    clusters = []
+    cresp = call_gpt(cluster_prompt, [cluster_schema], function_call={"name":"cluster_files_gpt"})
+    clusters=[]
     if cresp:
         fc = cresp["choices"][0]["message"].get("function_call")
-        if fc and fc.get("name") == "cluster_files_gpt":
+        if fc and fc.get("name")=="cluster_files_gpt":
             args = safe_json_loads(fc.get("arguments"))
-            clusters = args.get("clusters", [])
+            clusters=args.get("clusters",[])
+
     final_report = f"GPT-based cluster for {len(cluster_files)} files."
-    return jsonify({"clusters": clusters, "finalReport": final_report}), 200
+    return jsonify({"clusters":clusters,"finalReport":final_report}),200
 
 @app.route('/api/instrument-upload', methods=['POST'])
 def instrument_upload():
-    """
-    Endpoint for instrument upload that triggers the full analysis pipeline.
-    """
     f = request.files.get('xrdFile')
     if not f:
         return jsonify({'error': 'No xrdFile provided'}), 400
     raw = f.read().decode('utf-8', errors='ignore')
-    settings = {}  # Use default settings or modify as needed
-    result = run_advanced_pipeline(raw, settings)
+    user_settings = {}
+    result = run_advanced_pipeline(raw, user_settings)
     return jsonify(result), 200
 
 if __name__ == '__main__':
